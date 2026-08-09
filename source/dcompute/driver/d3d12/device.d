@@ -1,86 +1,78 @@
 module dcompute.driver.d3d12.device;
 
-// Import bindings
 import dcompute.driver.d3d12.bindings;
 
-import core.stdc.stdio : printf;
-
-/// Represents a DirectX 12 compute device.
+/// D3D12 device: wraps adapter enumeration and ID3D12Device creation.
+/// Mirrors dcompute.driver.cuda.device — one Device per physical adapter.
 struct Device
 {
-    ID3D12Device* device;
-    IDXGIAdapter1* adapter;
-    
-    // Command structures
-    ID3D12CommandQueue* commandQueue;
-    ID3D12CommandAllocator* commandAllocator;
-    ID3D12GraphicsCommandList* commandList;
+    ID3D12Device    raw;
+    IDXGIAdapter1   adapter;
 
-    @disable this();
-
-    /// Initialize a new D3D12 device using the first hardware adapter.
-    this(size_t adapterIndex)
+    /// Device capability information (D3D12 equivalent of CUDA Device.Info).
+    static struct Info
     {
-        IDXGIFactory4* factory;
-        uint dxgiFactoryFlags = 0;
-
-        version(assert) 
-        {
-            // Enable the D3D12 debug layer.
-            ID3D12Debug* debugController;
-            if (SUCCEEDED(D3D12GetDebugInterface(IID_ID3D12Debug, cast(void**)&debugController)))
-            {
-                debugController.EnableDebugLayer();
-                debugController.Release();
-                dxgiFactoryFlags |= DXGI_CREATE_FACTORY_DEBUG;
-            }
-        }
-
-        if (FAILED(CreateDXGIFactory2(dxgiFactoryFlags, IID_IDXGIFactory4, cast(void**)&factory)))
-        {
-            assert(0, "Failed to create DXGI Factory");
-        }
-
-        // Enumerate adapters
-        IDXGIAdapter1* hardwareAdapter;
-        for (uint i = 0; factory.EnumAdapters1(i, &hardwareAdapter) != DXGI_ERROR_NOT_FOUND; ++i)
-        {
-            DXGI_ADAPTER_DESC1 desc;
-            hardwareAdapter.GetDesc1(&desc);
-
-            if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)
-            {
-                hardwareAdapter.Release();
-                continue;
-            }
-
-            if (i == adapterIndex)
-            {
-                adapter = hardwareAdapter;
-                break;
-            }
-            hardwareAdapter.Release();
-        }
-
-        if (!adapter)
-        {
-            assert(0, "Failed to find a suitable hardware adapter.");
-        }
-
-        if (FAILED(D3D12CreateDevice(cast(IUnknown*)adapter, D3D_FEATURE_LEVEL_11_0, IID_ID3D12Device, cast(void**)&device)))
-        {
-            assert(0, "Failed to create D3D12 device.");
-        }
-        
-        factory.Release();
+        wchar[128] description;
+        uint vendorId;
+        uint deviceId;
+        size_t dedicatedVideoMemory;
+        size_t dedicatedSystemMemory;
+        size_t sharedSystemMemory;
+        bool isSoftware;
     }
-    
-    ~this()
+
+    /// Retrieve adapter metadata.
+    @property Info info()
     {
-        if (commandList) commandList.Release();
-        if (commandAllocator) commandAllocator.Release();
-        if (commandQueue) commandQueue.Release();
-        if (device) device.Release();
-        if (adapter) adapter.Release();
+        Info ret;
+        if (adapter.lpVtbl is null) return ret;
+
+        DXGI_ADAPTER_DESC1 desc;
+        (*adapter.lpVtbl).GetDesc1(cast(void*)&adapter, &desc);
+
+        ret.description           = desc.Description;
+        ret.vendorId              = desc.VendorId;
+        ret.deviceId              = desc.DeviceId;
+        ret.dedicatedVideoMemory  = desc.DedicatedVideoMemory;
+        ret.dedicatedSystemMemory = desc.DedicatedSystemMemory;
+        ret.sharedSystemMemory    = desc.SharedSystemMemory;
+        ret.isSoftware            = (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0;
+        return ret;
+    }
+
+    @property size_t totalMemory()
+    {
+        auto i = info;
+        return i.dedicatedVideoMemory;
+    }
+
+    /// Create a D3D12 device on a specific adapter.
+    static Device create(IDXGIAdapter1 adap, D3D_FEATURE_LEVEL level = D3D_FEATURE_LEVEL._11_0)
+    {
+        Device ret;
+        ret.adapter = adap;
+        auto hr = D3D12CreateDevice(
+            cast(void*)&adap,
+            level,
+            &IID_ID3D12Device,
+            cast(void**)&ret.raw
+        );
+        if (FAILED(hr))
+            ret.raw = ID3D12Device.init;
+        return ret;
+    }
+
+    void release()
+    {
+        if (raw.lpVtbl !is null)
+        {
+            (*raw.lpVtbl).Release(cast(void*)&raw);
+            raw = ID3D12Device.init;
+        }
+        if (adapter.lpVtbl !is null)
+        {
+            (*adapter.lpVtbl).Release(cast(void*)&adapter);
+            adapter = IDXGIAdapter1.init;
+        }
     }
 }

@@ -17,15 +17,15 @@ enum Copy {
 ///   - UPLOAD heap   = CPU-writable, GPU-readable (for hostToDevice)
 ///   - READBACK heap = GPU-writable, CPU-readable (for deviceToHost)
 ///
-/// This struct manages all three heaps transparently. The user sees a simple
-/// `copy!(Copy.hostToDevice)` / `copy!(Copy.deviceToHost)` interface.
+/// This struct manages all three heaps transparently.
 struct Buffer(T)
 {
-    ID3D12Resource  gpuResource;     // DEFAULT heap — UAV target
-    ID3D12Resource  stagingResource; // UPLOAD or READBACK heap for transfers
-    T[]             hostMemory;      // Host-side shadow
+    ID3D12Resource  gpuResource;      // DEFAULT heap — UAV target
+    ID3D12Resource  uploadResource;   // UPLOAD heap for hostToDevice
+    ID3D12Resource  readbackResource; // READBACK heap for deviceToHost
+    T[]             hostMemory;       // Host-side shadow
     size_t          numElements;
-    ID3D12Device    device;          // cached reference
+    ID3D12Device    device;           // cached reference
 
     this(size_t elems)
     {
@@ -75,34 +75,36 @@ struct Buffer(T)
 
         static if (c == Copy.hostToDevice)
         {
-            // 1. Create upload heap staging buffer
-            auto staging = createStagingBuffer(D3D12_HEAP_TYPE.UPLOAD, D3D12_RESOURCE_STATES.GENERIC_READ);
-            if (staging is null) return;
+            // 1. Lazy allocation of upload heap staging buffer
+            if (uploadResource is null)
+            {
+                uploadResource = createStagingBuffer(D3D12_HEAP_TYPE.UPLOAD, D3D12_RESOURCE_STATES.GENERIC_READ);
+            }
+            if (uploadResource is null) return;
 
             // 2. Map upload buffer, copy host data in
             void* mapped;
             D3D12_RANGE readRange = D3D12_RANGE(0, 0); // we won't read
-            staging.Map(0, &readRange, &mapped);
+            uploadResource.Map(0, &readRange, &mapped);
             if (mapped !is null)
             {
                 import core.stdc.string : memcpy;
                 memcpy(mapped, hostMemory.ptr, hostMemory.length * T.sizeof);
                 D3D12_RANGE writeRange = D3D12_RANGE(0, hostMemory.length * T.sizeof);
-                staging.Unmap(0, &writeRange);
+                uploadResource.Unmap(0, &writeRange);
             }
 
-            // 3. Execute GPU copy (staging → gpuResource) via command list
-            // This requires a command queue — done in Queue.executeCopy()
-
-            stagingResource = staging;
+            // 3. Execute GPU copy (uploadResource → gpuResource) via command list
+            // This requires a command queue — typically done via Queue.executeCopy()
         }
         else static if (c == Copy.deviceToHost)
         {
-            // 1. Create readback heap staging buffer
-            auto staging = createStagingBuffer(D3D12_HEAP_TYPE.READBACK, D3D12_RESOURCE_STATES.COPY_DEST);
-            if (staging is null) return;
-
-            stagingResource = staging;
+            // 1. Lazy allocation of readback heap staging buffer
+            if (readbackResource is null)
+            {
+                readbackResource = createStagingBuffer(D3D12_HEAP_TYPE.READBACK, D3D12_RESOURCE_STATES.COPY_DEST);
+            }
+            if (readbackResource is null) return;
 
             // After GPU copy completes (via Queue), map and read back:
             // readBack() should be called after Queue.wait()
@@ -113,16 +115,16 @@ struct Buffer(T)
     /// and copy data into hostMemory.
     void readBack()
     {
-        if (stagingResource is null || hostMemory is null) return;
+        if (readbackResource is null || hostMemory is null) return;
 
         void* mapped;
         D3D12_RANGE readRange = D3D12_RANGE(0, numElements * T.sizeof);
-        auto hr = stagingResource.Map(0, &readRange, &mapped);
+        auto hr = readbackResource.Map(0, &readRange, &mapped);
         if (SUCCEEDED(hr) && mapped !is null)
         {
             import core.stdc.string : memcpy;
             memcpy(hostMemory.ptr, mapped, numElements * T.sizeof);
-            stagingResource.Unmap(0, null);
+            readbackResource.Unmap(0, null);
         }
     }
 
@@ -166,10 +168,15 @@ struct Buffer(T)
             gpuResource.Release();
             gpuResource = null;
         }
-        if (stagingResource !is null)
+        if (uploadResource !is null)
         {
-            stagingResource.Release();
-            stagingResource = null;
+            uploadResource.Release();
+            uploadResource = null;
+        }
+        if (readbackResource !is null)
+        {
+            readbackResource.Release();
+            readbackResource = null;
         }
         hostMemory = null;
     }

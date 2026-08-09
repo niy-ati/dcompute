@@ -268,8 +268,13 @@ struct Queue
                 // Wait immediately to keep memory safe (simplification)
                 q.wait();
 
-                // Cleanup temporary heap
+                // Cleanup temporary heaps and resources
                 descHeap.Release();
+                static if (numScalars > 0)
+                {
+                    if (cbResource !is null)
+                        cbResource.Release();
+                }
             }
         }
         

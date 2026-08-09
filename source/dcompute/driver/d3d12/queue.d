@@ -23,37 +23,37 @@ struct Queue
     this(bool async)
     {
         device = Runtime.defaultDevice.raw;
-        if (device.lpVtbl is null) return;
+        if (device is null) return;
 
         // 1. Create Command Queue
         D3D12_COMMAND_QUEUE_DESC qDesc;
         qDesc.Type = D3D12_COMMAND_LIST_TYPE.DIRECT; // Or COMPUTE
         qDesc.Flags = 0;
         
-        auto hr = (*device.lpVtbl).CreateCommandQueue(
-            cast(void*)&device, &qDesc, &IID_ID3D12CommandQueue, cast(void**)&raw
+        auto hr = device.CreateCommandQueue(
+            &qDesc, &IID_ID3D12CommandQueue, cast(void**)&raw
         );
         if (FAILED(hr)) return;
 
         // 2. Create Command Allocator
-        hr = (*device.lpVtbl).CreateCommandAllocator(
-            cast(void*)&device, D3D12_COMMAND_LIST_TYPE.DIRECT, &IID_ID3D12CommandAllocator, cast(void**)&allocator
+        hr = device.CreateCommandAllocator(
+            D3D12_COMMAND_LIST_TYPE.DIRECT, &IID_ID3D12CommandAllocator, cast(void**)&allocator
         );
         if (FAILED(hr)) return;
 
         // 3. Create Command List
-        hr = (*device.lpVtbl).CreateCommandList(
-            cast(void*)&device, 0, D3D12_COMMAND_LIST_TYPE.DIRECT, allocator, null, &IID_ID3D12GraphicsCommandList, cast(void**)&commandList
+        hr = device.CreateCommandList(
+            0, D3D12_COMMAND_LIST_TYPE.DIRECT, allocator, null, &IID_ID3D12GraphicsCommandList, cast(void**)&commandList
         );
         if (FAILED(hr)) return;
 
         // Command lists are created in the recording state, but our pattern
         // opens/closes around dispatches. We close it immediately here.
-        (*commandList.lpVtbl).Close(cast(void*)&commandList);
+        commandList.Close();
 
         // 4. Create Sync Fence
-        hr = (*device.lpVtbl).CreateFence(
-            cast(void*)&device, 0, D3D12_FENCE_FLAGS.NONE, &IID_ID3D12Fence, cast(void**)&fence
+        hr = device.CreateFence(
+            0, D3D12_FENCE_FLAGS.NONE, &IID_ID3D12Fence, cast(void**)&fence
         );
         if (FAILED(hr)) return;
         
@@ -69,17 +69,17 @@ struct Queue
     /// Wait for all submitted work to complete on the GPU.
     void wait()
     {
-        if (raw.lpVtbl is null || fence.lpVtbl is null) return;
+        if (raw is null || fence is null) return;
 
         // Signal the fence from the GPU
         ulong fenceToWaitFor = fenceValue;
-        (*raw.lpVtbl).Signal(cast(void*)&raw, fence, fenceToWaitFor);
+        raw.Signal(fence, fenceToWaitFor);
         fenceValue++;
 
         // Wait on CPU
-        if ((*fence.lpVtbl).GetCompletedValue(cast(void*)&fence) < fenceToWaitFor)
+        if (fence.GetCompletedValue() < fenceToWaitFor)
         {
-            (*fence.lpVtbl).SetEventOnCompletion(cast(void*)&fence, fenceToWaitFor, fenceEvent);
+            fence.SetEventOnCompletion(fenceToWaitFor, fenceEvent);
             WaitForSingleObject(fenceEvent, INFINITE);
         }
     }
@@ -87,17 +87,17 @@ struct Queue
     /// Internal helper: Execute a copy between resources (e.g. upload to default)
     void executeCopy(ID3D12Resource dst, ID3D12Resource src)
     {
-        if (commandList.lpVtbl is null) return;
+        if (commandList is null) return;
         
-        (*allocator.lpVtbl).Reset(cast(void*)&allocator);
-        (*commandList.lpVtbl).Reset(cast(void*)&commandList, allocator, null);
+        allocator.Reset();
+        commandList.Reset(allocator, null);
 
-        (*commandList.lpVtbl).CopyResource(cast(void*)&commandList, dst, src);
+        commandList.CopyResource(dst, src);
 
-        (*commandList.lpVtbl).Close(cast(void*)&commandList);
+        commandList.Close();
 
-        ID3D12CommandList* ppCommandLists = cast(ID3D12CommandList*)commandList;
-        (*raw.lpVtbl).ExecuteCommandLists(cast(void*)&raw, 1, &ppCommandLists);
+        auto ppCommandLists = cast(ID3D12CommandList)commandList;
+        raw.ExecuteCommandLists(1, &ppCommandLists);
         
         wait();
     }
@@ -123,7 +123,7 @@ struct Queue
             // HostArgsOf gets the host-side types for the kernel (e.g. Buffer!float).
             void opCall(HostArgsOf!(typeof(k)) args)
             {
-                if (q.commandList.lpVtbl is null) return;
+                if (q.commandList is null) return;
 
                 auto kernel = Program.globalProgram.getKernel!k();
                 if (!kernel.isValid()) return;
@@ -142,18 +142,18 @@ struct Queue
                 heapDesc.NodeMask = 0;
 
                 ID3D12DescriptorHeap descHeap;
-                (*q.device.lpVtbl).CreateDescriptorHeap(
-                    cast(void*)&q.device, &heapDesc, &IID_ID3D12DescriptorHeap, cast(void**)&descHeap
+                q.device.CreateDescriptorHeap(
+                    &heapDesc, &IID_ID3D12DescriptorHeap, cast(void**)&descHeap
                 );
 
-                if (descHeap.lpVtbl is null) return;
+                if (descHeap is null) return;
 
-                uint descriptorSize = (*q.device.lpVtbl).GetDescriptorHandleIncrementSize(
-                    cast(void*)&q.device, D3D12_DESCRIPTOR_HEAP_TYPE.CBV_SRV_UAV
+                uint descriptorSize = q.device.GetDescriptorHandleIncrementSize(
+                    D3D12_DESCRIPTOR_HEAP_TYPE.CBV_SRV_UAV
                 );
                 
-                D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = (*descHeap.lpVtbl).GetCPUDescriptorHandleForHeapStart(cast(void*)&descHeap);
-                D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = (*descHeap.lpVtbl).GetGPUDescriptorHandleForHeapStart(cast(void*)&descHeap);
+                D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = descHeap.GetCPUDescriptorHandleForHeapStart();
+                D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = descHeap.GetGPUDescriptorHandleForHeapStart();
 
                 // 2. Map Buffer arguments to UAV views dynamically
                 size_t uavSlot = 0;
@@ -173,8 +173,8 @@ struct Queue
                         D3D12_CPU_DESCRIPTOR_HANDLE currentHandle = cpuHandle;
                         currentHandle.ptr += uavSlot * descriptorSize;
 
-                        (*q.device.lpVtbl).CreateUnorderedAccessView(
-                            cast(void*)&q.device, arg.gpuResource, null, &uavDesc, currentHandle
+                        q.device.CreateUnorderedAccessView(
+                            arg.gpuResource, null, &uavDesc, currentHandle
                         );
                         uavSlot++;
                     }
@@ -200,8 +200,7 @@ struct Queue
                     rd.Layout           = D3D12_TEXTURE_LAYOUT.ROW_MAJOR;
                     rd.Flags            = D3D12_RESOURCE_FLAGS.NONE;
 
-                    (*q.device.lpVtbl).CreateCommittedResource(
-                        cast(void*)&q.device,
+                    q.device.CreateCommittedResource(
                         &hp,
                         D3D12_HEAP_FLAGS.NONE,
                         &rd,
@@ -211,11 +210,11 @@ struct Queue
                         cast(void**)&cbResource
                     );
 
-                    if (cbResource.lpVtbl !is null)
+                    if (cbResource !is null)
                     {
                         void* mapped;
                         D3D12_RANGE readRange = D3D12_RANGE(0, 0);
-                        (*cbResource.lpVtbl).Map(cast(void*)&cbResource, 0, &readRange, &mapped);
+                        cbResource.Map(0, &readRange, &mapped);
                         if (mapped !is null)
                         {
                             size_t offset = 0;
@@ -229,48 +228,48 @@ struct Queue
                                 }
                             }
                             D3D12_RANGE writeRange = D3D12_RANGE(0, alignedCBSize);
-                            (*cbResource.lpVtbl).Unmap(cast(void*)&cbResource, 0, &writeRange);
+                            cbResource.Unmap(0, &writeRange);
                         }
 
                         D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc;
-                        cbvDesc.BufferLocation = (*cbResource.lpVtbl).GetGPUVirtualAddress(cast(void*)&cbResource);
+                        cbvDesc.BufferLocation = cbResource.GetGPUVirtualAddress();
                         cbvDesc.SizeInBytes    = cast(uint)alignedCBSize;
 
                         D3D12_CPU_DESCRIPTOR_HANDLE cbvHandle = cpuHandle;
                         cbvHandle.ptr += uavSlot * descriptorSize;
 
-                        (*q.device.lpVtbl).CreateConstantBufferView(
-                            cast(void*)&q.device, &cbvDesc, cbvHandle
+                        q.device.CreateConstantBufferView(
+                            &cbvDesc, cbvHandle
                         );
                     }
                 }
 
-                // 3. Record command list
-                (*q.allocator.lpVtbl).Reset(cast(void*)&q.allocator);
-                (*q.commandList.lpVtbl).Reset(cast(void*)&q.commandList, q.allocator, kernel.pipelineState);
+                // 4. Record command list
+                q.allocator.Reset();
+                q.commandList.Reset(q.allocator, kernel.pipelineState);
 
-                (*q.commandList.lpVtbl).SetComputeRootSignature(cast(void*)&q.commandList, kernel.rootSignature);
+                q.commandList.SetComputeRootSignature(kernel.rootSignature);
                 
-                ID3D12DescriptorHeap* ppHeaps = cast(ID3D12DescriptorHeap*)descHeap;
-                (*q.commandList.lpVtbl).SetDescriptorHeaps(cast(void*)&q.commandList, 1, &ppHeaps);
+                auto ppHeaps = cast(ID3D12DescriptorHeap)descHeap;
+                q.commandList.SetDescriptorHeaps(1, &ppHeaps);
 
-                (*q.commandList.lpVtbl).SetComputeRootDescriptorTable(cast(void*)&q.commandList, 0, gpuHandle);
+                q.commandList.SetComputeRootDescriptorTable(0, gpuHandle);
 
-                // 4. Dispatch
+                // 5. Dispatch
                 // DCompute kernel blocks map directly to Dispatch thread groups.
-                (*q.commandList.lpVtbl).Dispatch(cast(void*)&q.commandList, grid[0], grid[1], grid[2]);
+                q.commandList.Dispatch(grid[0], grid[1], grid[2]);
 
-                (*q.commandList.lpVtbl).Close(cast(void*)&q.commandList);
+                q.commandList.Close();
 
-                // 5. Execute
-                ID3D12CommandList* ppCommandLists = cast(ID3D12CommandList*)q.commandList;
-                (*q.raw.lpVtbl).ExecuteCommandLists(cast(void*)&q.raw, 1, &ppCommandLists);
+                // 6. Execute
+                auto ppCommandLists = cast(ID3D12CommandList)q.commandList;
+                q.raw.ExecuteCommandLists(1, &ppCommandLists);
 
                 // Wait immediately to keep memory safe (simplification)
                 q.wait();
 
                 // Cleanup temporary heap
-                (*descHeap.lpVtbl).Release(cast(void*)&descHeap);
+                descHeap.Release();
             }
         }
         

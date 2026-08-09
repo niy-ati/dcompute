@@ -25,10 +25,10 @@ struct Device
     @property Info info()
     {
         Info ret;
-        if (adapter.lpVtbl is null) return ret;
+        if (adapter is null) return ret;
 
         DXGI_ADAPTER_DESC1 desc;
-        (*adapter.lpVtbl).GetDesc1(cast(void*)&adapter, &desc);
+        adapter.GetDesc1(&desc);
 
         ret.description           = desc.Description;
         ret.vendorId              = desc.VendorId;
@@ -52,27 +52,27 @@ struct Device
         Device ret;
         ret.adapter = adap;
         auto hr = D3D12CreateDevice(
-            cast(void*)&adap,
+            cast(void*)adap,
             level,
             &IID_ID3D12Device,
             cast(void**)&ret.raw
         );
         if (FAILED(hr))
-            ret.raw = ID3D12Device.init;
+            ret.raw = null;
         return ret;
     }
 
     void release()
     {
-        if (raw.lpVtbl !is null)
+        if (raw !is null)
         {
-            (*raw.lpVtbl).Release(cast(void*)&raw);
-            raw = ID3D12Device.init;
+            raw.Release();
+            raw = null;
         }
-        if (adapter.lpVtbl !is null)
+        if (adapter !is null)
         {
-            (*adapter.lpVtbl).Release(cast(void*)&adapter);
-            adapter = IDXGIAdapter1.init;
+            adapter.Release();
+            adapter = null;
         }
     }
 }

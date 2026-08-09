@@ -28,20 +28,20 @@ struct Kernel(F) if (is(F == function) || is(F == void))
 
     bool isValid() const
     {
-        return pipelineState.lpVtbl !is null;
+        return pipelineState !is null;
     }
 
     void release()
     {
-        if (pipelineState.lpVtbl !is null)
+        if (pipelineState !is null)
         {
-            (*pipelineState.lpVtbl).Release(cast(void*)&pipelineState);
-            pipelineState = ID3D12PipelineState.init;
+            pipelineState.Release();
+            pipelineState = null;
         }
-        if (rootSignature.lpVtbl !is null)
+        if (rootSignature !is null)
         {
-            (*rootSignature.lpVtbl).Release(cast(void*)&rootSignature);
-            rootSignature = ID3D12RootSignature.init;
+            rootSignature.Release();
+            rootSignature = null;
         }
     }
 }

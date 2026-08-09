@@ -58,25 +58,24 @@ struct Program
         ID3DBlob rsBlob, rsErr;
         auto hr = D3D12SerializeVersionedRootSignature(&rsDesc, &rsBlob, &rsErr);
         if (FAILED(hr))
-            return ID3D12RootSignature.init;
+            return null;
 
         ID3D12RootSignature rootSig;
-        hr = (*device.lpVtbl).CreateRootSignature(
-            cast(void*)&device,
+        hr = device.CreateRootSignature(
             0, // node mask
-            (*rsBlob.lpVtbl).GetBufferPointer(cast(void*)&rsBlob),
-            (*rsBlob.lpVtbl).GetBufferSize(cast(void*)&rsBlob),
+            rsBlob.GetBufferPointer(),
+            rsBlob.GetBufferSize(),
             &IID_ID3D12RootSignature,
             cast(void**)&rootSig
         );
 
         // Release the serialised blob
-        (*rsBlob.lpVtbl).Release(cast(void*)&rsBlob);
-        if (rsErr.lpVtbl !is null)
-            (*rsErr.lpVtbl).Release(cast(void*)&rsErr);
+        rsBlob.Release();
+        if (rsErr !is null)
+            rsErr.Release();
 
         if (FAILED(hr))
-            return ID3D12RootSignature.init;
+            return null;
 
         return rootSig;
     }
@@ -87,23 +86,22 @@ struct Program
         Kernel!void ret;
 
         auto device = Runtime.defaultDevice.raw;
-        if (device.lpVtbl is null)
+        if (device is null)
             return ret;
 
         // Build the root signature dynamically based on argument count
         ret.rootSignature = buildRootSignature(device, numUAVs, hasCBV);
-        if (ret.rootSignature.lpVtbl is null)
+        if (ret.rootSignature is null)
             return ret;
 
         // Build the compute PSO
         D3D12_COMPUTE_PIPELINE_STATE_DESC psoDesc;
-        psoDesc.pRootSignature      = cast(void*)&ret.rootSignature;
+        psoDesc.pRootSignature      = cast(void*)ret.rootSignature;
         psoDesc.CS.pShaderBytecode  = dxilBlob.ptr;
         psoDesc.CS.BytecodeLength   = dxilBlob.length;
         psoDesc.NodeMask            = 0;
 
-        auto hr = (*device.lpVtbl).CreateComputePipelineState(
-            cast(void*)&device,
+        auto hr = device.CreateComputePipelineState(
             &psoDesc,
             &IID_ID3D12PipelineState,
             cast(void**)&ret.pipelineState
@@ -111,7 +109,7 @@ struct Program
 
         if (FAILED(hr))
         {
-            ret.rootSignature.release();
+            ret.rootSignature.Release();
             ret = Kernel!void.init;
         }
 

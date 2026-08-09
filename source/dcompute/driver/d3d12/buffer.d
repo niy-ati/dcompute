@@ -33,7 +33,7 @@ struct Buffer(T)
         device = Runtime.defaultDevice.raw;
         numElements = elems;
 
-        if (device.lpVtbl is null) return;
+        if (device is null) return;
 
         // Create DEFAULT heap resource (GPU-local, UAV-capable)
         D3D12_HEAP_PROPERTIES hp;
@@ -49,8 +49,7 @@ struct Buffer(T)
         rd.Layout           = D3D12_TEXTURE_LAYOUT.ROW_MAJOR;
         rd.Flags            = D3D12_RESOURCE_FLAGS.ALLOW_UNORDERED_ACCESS;
 
-        (*device.lpVtbl).CreateCommittedResource(
-            cast(void*)&device,
+        device.CreateCommittedResource(
             &hp,
             D3D12_HEAP_FLAGS.NONE,
             &rd,
@@ -72,24 +71,24 @@ struct Buffer(T)
     /// CopyResource between the staging and GPU resources.
     void copy(Copy c)()
     {
-        if (device.lpVtbl is null || gpuResource.lpVtbl is null) return;
+        if (device is null || gpuResource is null) return;
 
         static if (c == Copy.hostToDevice)
         {
             // 1. Create upload heap staging buffer
             auto staging = createStagingBuffer(D3D12_HEAP_TYPE.UPLOAD, D3D12_RESOURCE_STATES.GENERIC_READ);
-            if (staging.lpVtbl is null) return;
+            if (staging is null) return;
 
             // 2. Map upload buffer, copy host data in
             void* mapped;
             D3D12_RANGE readRange = D3D12_RANGE(0, 0); // we won't read
-            (*staging.lpVtbl).Map(cast(void*)&staging, 0, &readRange, &mapped);
+            staging.Map(0, &readRange, &mapped);
             if (mapped !is null)
             {
                 import core.stdc.string : memcpy;
                 memcpy(mapped, hostMemory.ptr, hostMemory.length * T.sizeof);
                 D3D12_RANGE writeRange = D3D12_RANGE(0, hostMemory.length * T.sizeof);
-                (*staging.lpVtbl).Unmap(cast(void*)&staging, 0, &writeRange);
+                staging.Unmap(0, &writeRange);
             }
 
             // 3. Execute GPU copy (staging → gpuResource) via command list
@@ -101,7 +100,7 @@ struct Buffer(T)
         {
             // 1. Create readback heap staging buffer
             auto staging = createStagingBuffer(D3D12_HEAP_TYPE.READBACK, D3D12_RESOURCE_STATES.COPY_DEST);
-            if (staging.lpVtbl is null) return;
+            if (staging is null) return;
 
             stagingResource = staging;
 
@@ -114,18 +113,16 @@ struct Buffer(T)
     /// and copy data into hostMemory.
     void readBack()
     {
-        if (stagingResource.lpVtbl is null || hostMemory is null) return;
+        if (stagingResource is null || hostMemory is null) return;
 
         void* mapped;
         D3D12_RANGE readRange = D3D12_RANGE(0, numElements * T.sizeof);
-        auto hr = (*stagingResource.lpVtbl).Map(
-            cast(void*)&stagingResource, 0, &readRange, &mapped
-        );
+        auto hr = stagingResource.Map(0, &readRange, &mapped);
         if (SUCCEEDED(hr) && mapped !is null)
         {
             import core.stdc.string : memcpy;
             memcpy(hostMemory.ptr, mapped, numElements * T.sizeof);
-            (*stagingResource.lpVtbl).Unmap(cast(void*)&stagingResource, 0, null);
+            stagingResource.Unmap(0, null);
         }
     }
 
@@ -146,8 +143,7 @@ struct Buffer(T)
         rd.Flags            = D3D12_RESOURCE_FLAGS.NONE;
 
         ID3D12Resource res;
-        (*device.lpVtbl).CreateCommittedResource(
-            cast(void*)&device,
+        device.CreateCommittedResource(
             &hp,
             D3D12_HEAP_FLAGS.NONE,
             &rd,
@@ -165,15 +161,15 @@ struct Buffer(T)
 
     void release()
     {
-        if (gpuResource.lpVtbl !is null)
+        if (gpuResource !is null)
         {
-            (*gpuResource.lpVtbl).Release(cast(void*)&gpuResource);
-            gpuResource = ID3D12Resource.init;
+            gpuResource.Release();
+            gpuResource = null;
         }
-        if (stagingResource.lpVtbl !is null)
+        if (stagingResource !is null)
         {
-            (*stagingResource.lpVtbl).Release(cast(void*)&stagingResource);
-            stagingResource = ID3D12Resource.init;
+            stagingResource.Release();
+            stagingResource = null;
         }
         hostMemory = null;
     }

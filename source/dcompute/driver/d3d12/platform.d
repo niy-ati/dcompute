@@ -20,21 +20,19 @@ struct Platform
             cast(void**)&factory
         );
         if (FAILED(hr))
-            factory = IDXGIFactory4.init;
+            factory = null;
     }
 
     /// Enumerate all hardware adapters (skipping software/WARP).
     static Device[] getDevices()
     {
         Device[] devices;
-        if (factory.lpVtbl is null) return devices;
+        if (factory is null) return devices;
 
         for (uint i = 0; ; ++i)
         {
             IDXGIAdapter1 adap;
-            auto hr = (*factory.lpVtbl).EnumAdapters1(
-                cast(void*)&factory, i, &adap
-            );
+            auto hr = factory.EnumAdapters1(i, &adap);
             if (hr == DXGI_ERROR_NOT_FOUND)
                 break;
             if (FAILED(hr))
@@ -42,15 +40,15 @@ struct Platform
 
             // Skip software adapters
             DXGI_ADAPTER_DESC1 desc;
-            (*adap.lpVtbl).GetDesc1(cast(void*)&adap, &desc);
+            adap.GetDesc1(&desc);
             if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)
             {
-                (*adap.lpVtbl).Release(cast(void*)&adap);
+                adap.Release();
                 continue;
             }
 
             auto dev = Device.create(adap);
-            if (dev.raw.lpVtbl !is null)
+            if (dev.raw !is null)
                 devices ~= dev;
         }
         return devices;
@@ -59,14 +57,12 @@ struct Platform
     /// Get the WARP software adapter (useful for testing without hardware).
     static Device getWarpDevice()
     {
-        if (factory.lpVtbl is null)
+        if (factory is null)
             return Device.init;
 
-        IDXGIAdapter1 warp;
         // EnumWarpAdapter returns IDXGIAdapter, QI to IDXGIAdapter1
         void* warpRaw;
-        auto hr = (*factory.lpVtbl).EnumWarpAdapter(
-            cast(void*)&factory,
+        auto hr = factory.EnumWarpAdapter(
             &IID_IDXGIFactory4, // need IDXGIAdapter GUID here actually
             &warpRaw
         );
@@ -74,8 +70,8 @@ struct Platform
             return Device.init;
 
         // QI to IDXGIAdapter1
-        hr = (cast(IDXGIAdapter1Vtbl**)warpRaw).QueryInterface(
-            warpRaw,
+        IDXGIAdapter1 warp;
+        (cast(IUnknown)warpRaw).QueryInterface(
             &IID_ID3D12Device, // placeholder — in production use IID_IDXGIAdapter1
             cast(void**)&warp
         );

@@ -383,229 +383,121 @@ immutable GUID IID_ID3D12Resource = {
     0x696442be, 0xa72e, 0x4059, [0xbc, 0x79, 0x5b, 0x5c, 0x98, 0x04, 0x0f, 0xad]
 };
 
-// ── COM vtable wrappers ────────────────────────────────────────────────────
-// These mirror the exact COM vtable layout. Each function pointer takes a
-// raw void* self as the first argument, matching the C ABI for COM methods.
+// ── COM Interfaces ─────────────────────────────────────────────────────────
 
-// ── IDXGIFactory4 ──────────────────────────────────────────────────────────
-// Vtable slots: IUnknown(3) + IDXGIObject(4) + IDXGIFactory(6) +
-//               IDXGIFactory1(2) + IDXGIFactory2(5) + IDXGIFactory3(1) +
-//               IDXGIFactory4(2)
-// We only need: EnumAdapters1 (slot 12), EnumWarpAdapter (slot ~25)
-struct IDXGIFactory4Vtbl {
-    // IUnknown (0-2)
-    extern(Windows) HRESULT function(void*, const(GUID)*, void**) QueryInterface;
-    extern(Windows) uint function(void*) AddRef;
-    extern(Windows) uint function(void*) Release;
-    // IDXGIObject (3-6)
-    void*[4] _dxgiObject;
-    // IDXGIFactory (7-12)
-    void*[5] _dxgiFactory;
-    extern(Windows) HRESULT function(void*, uint, IDXGIAdapter1**) EnumAdapters1;  // slot 12
-    // IDXGIFactory1 (13)
-    void*  _isCurrent;
-    // IDXGIFactory2 (14-18)
-    void*[5] _dxgiFactory2;
-    // IDXGIFactory3 (19)
-    void*  _getCreationFlags;
-    // IDXGIFactory4 (20-21)
-    void*  _enumAdapterByLuid;
-    extern(Windows) HRESULT function(void*, const(GUID)*, void**) EnumWarpAdapter; // slot 21
+extern(Windows) interface IUnknown {
+    HRESULT QueryInterface(const(GUID)* riid, void** ppvObject);
+    uint AddRef();
+    uint Release();
+}
+extern(Windows) interface IDXGIObject : IUnknown {
+    void _pad3(); void _pad4(); void _pad5(); void _pad6();
+}
+extern(Windows) interface ID3D12Object : IUnknown {
+    void _pad3(); void _pad4(); void _pad5(); void _pad6();
 }
 
-struct IDXGIAdapter1Vtbl {
-    // IUnknown (0-2)
-    extern(Windows) HRESULT function(void*, const(GUID)*, void**) QueryInterface;
-    extern(Windows) uint function(void*) AddRef;
-    extern(Windows) uint function(void*) Release;
-    // IDXGIObject (3-6)
-    void*[4] _dxgiObject;
-    // IDXGIAdapter (7-8)
-    void*  _enumOutputs;
-    extern(Windows) HRESULT function(void*, DXGI_ADAPTER_DESC1*) GetDesc1; // slot 8 for IDXGIAdapter1
+extern(Windows) interface IDXGIFactory4 : IDXGIObject {
+    void _pad7(); void _pad8(); void _pad9(); void _pad10(); void _pad11();
+    HRESULT EnumAdapters1(uint Adapter, IDXGIAdapter1* ppAdapter);
+    void _pad13(); void _pad14(); void _pad15(); void _pad16(); void _pad17(); void _pad18(); void _pad19(); void _pad20();
+    HRESULT EnumWarpAdapter(const(GUID)* riid, void** ppvAdapter);
 }
 
-// ── ID3DBlob ───────────────────────────────────────────────────────────────
-struct ID3DBlobVtbl {
-    extern(Windows) HRESULT function(void*, const(GUID)*, void**) QueryInterface;
-    extern(Windows) uint function(void*) AddRef;
-    extern(Windows) uint function(void*) Release;
-    extern(Windows) void* function(void*) GetBufferPointer;
-    extern(Windows) size_t function(void*) GetBufferSize;
+extern(Windows) interface IDXGIAdapter1 : IDXGIObject {
+    void _pad7();
+    HRESULT GetDesc1(DXGI_ADAPTER_DESC1* pDesc);
 }
 
-// ── ID3D12Device ───────────────────────────────────────────────────────────
-// Full vtable: IUnknown(3) + ID3D12Object(4) + ID3D12Device(41 methods)
-// We bind only the slots we actually call; everything else is void*.
-struct ID3D12DeviceVtbl {
-    // IUnknown (0-2)
-    extern(Windows) HRESULT function(void*, const(GUID)*, void**) QueryInterface;
-    extern(Windows) uint function(void*) AddRef;
-    extern(Windows) uint function(void*) Release;
-    // ID3D12Object (3-6)
-    void*[4] _d3d12Object;
-    // ID3D12Device methods begin at slot 7
-    void*  _GetNodeCount;                                                  // 7
-    extern(Windows) HRESULT function(void*, const(D3D12_COMMAND_QUEUE_DESC)*, const(GUID)*, void**) CreateCommandQueue;  // 8
-    extern(Windows) HRESULT function(void*, D3D12_COMMAND_LIST_TYPE, const(GUID)*, void**) CreateCommandAllocator;       // 9
-    void*  _CreateGraphicsPipelineState;                                   // 10
-    extern(Windows) HRESULT function(void*, const(D3D12_COMPUTE_PIPELINE_STATE_DESC)*, const(GUID)*, void**) CreateComputePipelineState; // 11
-    extern(Windows) HRESULT function(void*, uint, D3D12_COMMAND_LIST_TYPE, ID3D12CommandAllocator*, ID3D12PipelineState*, const(GUID)*, void**) CreateCommandList; // 12
-    void*  _CheckFeatureSupport;                                           // 13
-    extern(Windows) HRESULT function(void*, const(D3D12_DESCRIPTOR_HEAP_DESC)*, const(GUID)*, void**) CreateDescriptorHeap; // 14
-    extern(Windows) uint function(void*, D3D12_DESCRIPTOR_HEAP_TYPE) GetDescriptorHandleIncrementSize; // 15
-    extern(Windows) HRESULT function(void*, uint, const(void)*, size_t, const(GUID)*, void**) CreateRootSignature; // 16
-    extern(Windows) void function(void*, const(D3D12_CONSTANT_BUFFER_VIEW_DESC)*, D3D12_CPU_DESCRIPTOR_HANDLE) CreateConstantBufferView; // 17
-    void*  _CreateShaderResourceView;                                      // 18
-    extern(Windows) void function(void*, ID3D12Resource*, ID3D12Resource*, const(D3D12_UNORDERED_ACCESS_VIEW_DESC)*, D3D12_CPU_DESCRIPTOR_HANDLE) CreateUnorderedAccessView; // 19
-    void*[4] _renderAndDepthViews;                                         // 20-23
-    void*[2] _copyDescriptors;                                             // 24-25 (CopyDescriptors, CopyDescriptorsSimple)
-    void*  _GetResourceAllocationInfo;                                     // 26
-    void*  _GetCustomHeapProperties;                                       // 27
-    extern(Windows) HRESULT function(void*, const(D3D12_HEAP_PROPERTIES)*, D3D12_HEAP_FLAGS, const(D3D12_RESOURCE_DESC)*, D3D12_RESOURCE_STATES, const(void)*, const(GUID)*, void**) CreateCommittedResource; // 28
-    void*[4] _heapAndPlacedResource;                                       // 29-32
-    void*[3] _sharedHandles;                                               // 33-35
-    void*[2] _residentEvict;                                               // 36-37
-    extern(Windows) HRESULT function(void*, ulong, D3D12_FENCE_FLAGS, const(GUID)*, void**) CreateFence; // 38
-    void*  _GetDeviceRemovedReason;                                        // 39
-    void*  _GetCopyableFootprints;                                         // 40
-    void*  _CreateQueryHeap;                                               // 41
-    void*  _SetStablePowerState;                                           // 42
-    void*  _CreateCommandSignature;                                        // 43
-    void*  _GetResourceTiling;                                             // 44
-    void*  _GetAdapterLuid;                                                // 45
+extern(Windows) interface ID3DBlob : IUnknown {
+    void* GetBufferPointer();
+    size_t GetBufferSize();
 }
 
-// ── ID3D12CommandQueue ─────────────────────────────────────────────────────
-struct ID3D12CommandQueueVtbl {
-    extern(Windows) HRESULT function(void*, const(GUID)*, void**) QueryInterface;
-    extern(Windows) uint function(void*) AddRef;
-    extern(Windows) uint function(void*) Release;
-    void*[4] _d3d12Object;                 // ID3D12Object (3-6)
-    void*  _UpdateTileMappings;            // 7
-    void*  _CopyTileMappings;              // 8
-    extern(Windows) void function(void*, uint, ID3D12CommandList**) ExecuteCommandLists; // 9
-    void*  _SetMarker;                     // 10
-    void*  _BeginEvent;                    // 11
-    void*  _EndEvent;                      // 12
-    extern(Windows) HRESULT function(void*, ID3D12Fence*, ulong) Signal; // 13
-    void*  _Wait;                          // 14
-    void*  _GetTimestampFrequency;         // 15
-    void*  _GetClockCalibration;           // 16
-    void*  _GetDesc;                       // 17
+extern(Windows) interface ID3D12Device : ID3D12Object {
+    void _pad7();
+    HRESULT CreateCommandQueue(const(D3D12_COMMAND_QUEUE_DESC)* pDesc, const(GUID)* riid, void** ppCommandQueue);
+    HRESULT CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE type, const(GUID)* riid, void** ppCommandAllocator);
+    void _pad10();
+    HRESULT CreateComputePipelineState(const(D3D12_COMPUTE_PIPELINE_STATE_DESC)* pDesc, const(GUID)* riid, void** ppPipelineState);
+    HRESULT CreateCommandList(uint nodeMask, D3D12_COMMAND_LIST_TYPE type, ID3D12CommandAllocator pCommandAllocator, ID3D12PipelineState pInitialState, const(GUID)* riid, void** ppCommandList);
+    void _pad13();
+    HRESULT CreateDescriptorHeap(const(D3D12_DESCRIPTOR_HEAP_DESC)* pDescriptorHeapDesc, const(GUID)* riid, void** ppvHeap);
+    uint GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE DescriptorHeapType);
+    HRESULT CreateRootSignature(uint nodeMask, const(void)* pBlobWithRootSignature, size_t blobLengthInBytes, const(GUID)* riid, void** ppvRootSignature);
+    void CreateConstantBufferView(const(D3D12_CONSTANT_BUFFER_VIEW_DESC)* pDesc, D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor);
+    void _pad18();
+    void CreateUnorderedAccessView(ID3D12Resource pResource, ID3D12Resource pCounterResource, const(D3D12_UNORDERED_ACCESS_VIEW_DESC)* pDesc, D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor);
+    void _pad20(); void _pad21(); void _pad22(); void _pad23();
+    void _pad24(); void _pad25();
+    void _pad26(); void _pad27();
+    HRESULT CreateCommittedResource(const(D3D12_HEAP_PROPERTIES)* pHeapProperties, D3D12_HEAP_FLAGS HeapFlags, const(D3D12_RESOURCE_DESC)* pDesc, D3D12_RESOURCE_STATES InitialResourceState, const(void)* pOptimizedClearValue, const(GUID)* riid, void** ppvResource);
+    void _pad29(); void _pad30(); void _pad31(); void _pad32();
+    void _pad33(); void _pad34(); void _pad35();
+    void _pad36(); void _pad37();
+    HRESULT CreateFence(ulong InitialValue, D3D12_FENCE_FLAGS Flags, const(GUID)* riid, void** ppFence);
+    void _pad39(); void _pad40(); void _pad41(); void _pad42(); void _pad43(); void _pad44(); void _pad45();
 }
 
-// We need an ID3D12CommandList to pass to ExecuteCommandLists, which
-// expects ID3D12CommandList** (base type). We define a minimal one.
-struct ID3D12CommandList;
-
-// ── ID3D12CommandAllocator ─────────────────────────────────────────────────
-struct ID3D12CommandAllocatorVtbl {
-    extern(Windows) HRESULT function(void*, const(GUID)*, void**) QueryInterface;
-    extern(Windows) uint function(void*) AddRef;
-    extern(Windows) uint function(void*) Release;
-    void*[4] _d3d12Object;
-    extern(Windows) HRESULT function(void*) Reset; // 7
+extern(Windows) interface ID3D12CommandQueue : ID3D12Object {
+    void _pad7(); void _pad8();
+    void ExecuteCommandLists(uint NumCommandLists, ID3D12CommandList* ppCommandLists);
+    void _pad10(); void _pad11(); void _pad12();
+    HRESULT Signal(ID3D12Fence pFence, ulong Value);
+    void _pad14(); void _pad15(); void _pad16(); void _pad17();
 }
 
-// ── ID3D12GraphicsCommandList ──────────────────────────────────────────────
-// Full vtable is massive (60+ methods). We bind only what we use.
-struct ID3D12GraphicsCommandListVtbl {
-    extern(Windows) HRESULT function(void*, const(GUID)*, void**) QueryInterface;
-    extern(Windows) uint function(void*) AddRef;
-    extern(Windows) uint function(void*) Release;
-    void*[4] _d3d12Object;                // ID3D12Object (3-6)
-    // ID3D12CommandList
-    void*  _GetType;                       // 7
-    // ID3D12GraphicsCommandList
-    extern(Windows) HRESULT function(void*) Close;                         // 8
-    extern(Windows) HRESULT function(void*, ID3D12CommandAllocator*, ID3D12PipelineState*) Reset; // 9
-    void*  _ClearState;                    // 10
-    void*  _DrawInstanced;                 // 11
-    void*  _DrawIndexedInstanced;          // 12
-    extern(Windows) void function(void*, uint, uint, uint) Dispatch;       // 13
-    void*  _CopyBufferRegion;              // 14
-    void*  _CopyTextureRegion;             // 15
-    extern(Windows) void function(void*, ID3D12Resource*, ID3D12Resource*) CopyResource; // 16
-    void*[5] _misc1;                       // 17-21 (CopyTiles..OMSetStencilRef)
-    extern(Windows) void function(void*, ID3D12PipelineState*) SetPipelineState; // 22
-    extern(Windows) void function(void*, uint, const(D3D12_RESOURCE_BARRIER)*) ResourceBarrier; // 23
-    void*  _ExecuteBundle;                 // 24
-    extern(Windows) void function(void*, uint, ID3D12DescriptorHeap**) SetDescriptorHeaps; // 25
-    extern(Windows) void function(void*, ID3D12RootSignature*) SetComputeRootSignature; // 26
-    void*  _SetGraphicsRootSignature;      // 27
-    extern(Windows) void function(void*, uint, D3D12_GPU_DESCRIPTOR_HANDLE) SetComputeRootDescriptorTable; // 28
+extern(Windows) interface ID3D12CommandList : ID3D12Object {
+    void _pad7();
 }
 
-// ── ID3D12PipelineState ────────────────────────────────────────────────────
-struct ID3D12PipelineStateVtbl {
-    extern(Windows) HRESULT function(void*, const(GUID)*, void**) QueryInterface;
-    extern(Windows) uint function(void*) AddRef;
-    extern(Windows) uint function(void*) Release;
-    void*[4] _d3d12Object;
-    void*  _GetCachedBlob;
+extern(Windows) interface ID3D12CommandAllocator : ID3D12Object {
+    HRESULT Reset();
 }
 
-// ── ID3D12RootSignature ────────────────────────────────────────────────────
-struct ID3D12RootSignatureVtbl {
-    extern(Windows) HRESULT function(void*, const(GUID)*, void**) QueryInterface;
-    extern(Windows) uint function(void*) AddRef;
-    extern(Windows) uint function(void*) Release;
-    void*[4] _d3d12Object;
+extern(Windows) interface ID3D12GraphicsCommandList : ID3D12CommandList {
+    HRESULT Close();
+    HRESULT Reset(ID3D12CommandAllocator pAllocator, ID3D12PipelineState pInitialState);
+    void _pad10(); void _pad11(); void _pad12();
+    void Dispatch(uint ThreadGroupCountX, uint ThreadGroupCountY, uint ThreadGroupCountZ);
+    void _pad14(); void _pad15();
+    void CopyResource(ID3D12Resource pDstResource, ID3D12Resource pSrcResource);
+    void _pad17(); void _pad18(); void _pad19(); void _pad20(); void _pad21();
+    void SetPipelineState(ID3D12PipelineState pPipelineState);
+    void ResourceBarrier(uint NumBarriers, const(D3D12_RESOURCE_BARRIER)* pBarriers);
+    void _pad24();
+    void SetDescriptorHeaps(uint NumDescriptorHeaps, ID3D12DescriptorHeap* ppDescriptorHeaps);
+    void SetComputeRootSignature(ID3D12RootSignature pRootSignature);
+    void _pad27();
+    void SetComputeRootDescriptorTable(uint RootParameterIndex, D3D12_GPU_DESCRIPTOR_HANDLE BaseDescriptor);
 }
 
-// ── ID3D12DescriptorHeap ───────────────────────────────────────────────────
-struct ID3D12DescriptorHeapVtbl {
-    extern(Windows) HRESULT function(void*, const(GUID)*, void**) QueryInterface;
-    extern(Windows) uint function(void*) AddRef;
-    extern(Windows) uint function(void*) Release;
-    void*[4] _d3d12Object;
-    void*  _GetDesc;                       // 7
-    extern(Windows) D3D12_CPU_DESCRIPTOR_HANDLE function(void*) GetCPUDescriptorHandleForHeapStart; // 8
-    extern(Windows) D3D12_GPU_DESCRIPTOR_HANDLE function(void*) GetGPUDescriptorHandleForHeapStart; // 9
+extern(Windows) interface ID3D12PipelineState : ID3D12Object {
+    void _pad7();
 }
 
-// ── ID3D12Resource ─────────────────────────────────────────────────────────
-struct ID3D12ResourceVtbl {
-    extern(Windows) HRESULT function(void*, const(GUID)*, void**) QueryInterface;
-    extern(Windows) uint function(void*) AddRef;
-    extern(Windows) uint function(void*) Release;
-    void*[4] _d3d12Object;
-    extern(Windows) HRESULT function(void*, uint, const(D3D12_RANGE)*, void**) Map;    // 7
-    extern(Windows) void function(void*, uint, const(D3D12_RANGE)*) Unmap;             // 8
-    void*  _GetDesc;                       // 9
-    extern(Windows) ulong function(void*) GetGPUVirtualAddress;          // 10
-    void*  _WriteToSubresource;            // 11
-    void*  _ReadFromSubresource;           // 12
-    void*  _GetHeapProperties;             // 13
+extern(Windows) interface ID3D12RootSignature : ID3D12Object {
 }
 
-// ── ID3D12Fence ────────────────────────────────────────────────────────────
-struct ID3D12FenceVtbl {
-    extern(Windows) HRESULT function(void*, const(GUID)*, void**) QueryInterface;
-    extern(Windows) uint function(void*) AddRef;
-    extern(Windows) uint function(void*) Release;
-    void*[4] _d3d12Object;
-    extern(Windows) ulong function(void*) GetCompletedValue;               // 7
-    extern(Windows) HRESULT function(void*, ulong, HANDLE) SetEventOnCompletion; // 8
-    extern(Windows) HRESULT function(void*, ulong) Signal;                 // 9
+extern(Windows) interface ID3D12DescriptorHeap : ID3D12Object {
+    void _pad7();
+    D3D12_CPU_DESCRIPTOR_HANDLE GetCPUDescriptorHandleForHeapStart();
+    D3D12_GPU_DESCRIPTOR_HANDLE GetGPUDescriptorHandleForHeapStart();
 }
 
-// ── Wrapper structs ────────────────────────────────────────────────────────
-// Each wraps a pointer to a vtable pointer (standard COM layout).
+extern(Windows) interface ID3D12Resource : ID3D12Object {
+    HRESULT Map(uint Subresource, const(D3D12_RANGE)* pReadRange, void** ppData);
+    void Unmap(uint Subresource, const(D3D12_RANGE)* pWrittenRange);
+    void _pad9();
+    ulong GetGPUVirtualAddress();
+    void _pad11(); void _pad12(); void _pad13();
+}
 
-struct IDXGIFactory4  { IDXGIFactory4Vtbl**  lpVtbl; }
-struct IDXGIAdapter1  { IDXGIAdapter1Vtbl**  lpVtbl; }
-struct ID3DBlob       { ID3DBlobVtbl**       lpVtbl; }
-struct ID3D12Device   { ID3D12DeviceVtbl**   lpVtbl; }
-struct ID3D12CommandQueue { ID3D12CommandQueueVtbl** lpVtbl; }
-struct ID3D12CommandAllocator { ID3D12CommandAllocatorVtbl** lpVtbl; }
-struct ID3D12GraphicsCommandList { ID3D12GraphicsCommandListVtbl** lpVtbl; }
-struct ID3D12PipelineState { ID3D12PipelineStateVtbl** lpVtbl; }
-struct ID3D12RootSignature { ID3D12RootSignatureVtbl** lpVtbl; }
-struct ID3D12DescriptorHeap { ID3D12DescriptorHeapVtbl** lpVtbl; }
-struct ID3D12Resource { ID3D12ResourceVtbl** lpVtbl; }
-struct ID3D12Fence    { ID3D12FenceVtbl**    lpVtbl; }
+extern(Windows) interface ID3D12Fence : ID3D12Object {
+    ulong GetCompletedValue();
+    HRESULT SetEventOnCompletion(ulong Value, HANDLE hEvent);
+    HRESULT Signal(ulong Value);
+}
 
 // ── Win32 / D3D12 functions (loaded at link time via .lib) ─────────────────
 

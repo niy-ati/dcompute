@@ -1,11 +1,12 @@
 module dcompute.driver.d3d12.traits;
 
 import dcompute.driver.d3d12.buffer;
+import std.traits;
+import std.meta;
 
 /// Transforms a kernel function's parameter types into the corresponding host
 /// types. Specifically, replaces `GlobalPointer!T` with `Buffer!T`.
 template HostArgsOf(F) {
-    import std.meta, std.traits;
     import ldc.dcompute : Pointer; // Pointer!T is aliased to GlobalPointer!T in dcompute
     alias HostArgsOf = staticMap!(ReplaceTemplate!(Pointer, Buffer), Parameters!F);
 }
@@ -19,4 +20,54 @@ private template ReplaceTemplate(alias needle, alias replacement) {
             alias ReplaceTemplate = T;
         }
     }
+}
+
+/// Utility trait to check if a type is a D3D12 Buffer!T
+template isBufferArg(T) {
+    static if (is(T : Buffer!U, U))
+        enum isBufferArg = true;
+    else
+        enum isBufferArg = false;
+}
+
+/// Count the number of UAV (Buffer) parameters in a kernel signature
+template countUAVs(alias k) {
+    enum countUAVs = getUAVCount!(HostArgsOf!(typeof(k)))();
+}
+
+private size_t getUAVCount(Args...)() {
+    size_t count = 0;
+    static foreach (arg; Args) {
+        static if (isBufferArg!arg)
+            count++;
+    }
+    return count;
+}
+
+/// Count the number of scalar (non-Buffer) parameters in a kernel signature
+template countScalars(alias k) {
+    enum countScalars = getScalarCount!(HostArgsOf!(typeof(k)))();
+}
+
+private size_t getScalarCount(Args...)() {
+    size_t count = 0;
+    static foreach (arg; Args) {
+        static if (!isBufferArg!arg)
+            count++;
+    }
+    return count;
+}
+
+/// Calculate the total packed byte size of scalar arguments
+template scalarSize(alias k) {
+    enum scalarSize = getScalarSize!(HostArgsOf!(typeof(k)))();
+}
+
+private size_t getScalarSize(Args...)() {
+    size_t sz = 0;
+    static foreach (arg; Args) {
+        static if (!isBufferArg!arg)
+            sz += arg.sizeof;
+    }
+    return sz;
 }

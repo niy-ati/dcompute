@@ -339,6 +339,11 @@ struct D3D12_BUFFER_UAV {
     D3D12_BUFFER_UAV_FLAGS Flags;
 }
 
+struct D3D12_CONSTANT_BUFFER_VIEW_DESC {
+    ulong BufferLocation;
+    uint SizeInBytes;
+}
+
 struct D3D12_UNORDERED_ACCESS_VIEW_DESC {
     DXGI_FORMAT Format;
     D3D12_UAV_DIMENSION ViewDimension;
@@ -450,7 +455,7 @@ struct ID3D12DeviceVtbl {
     extern(Windows) HRESULT function(void*, const(D3D12_DESCRIPTOR_HEAP_DESC)*, const(GUID)*, void**) CreateDescriptorHeap; // 14
     extern(Windows) uint function(void*, D3D12_DESCRIPTOR_HEAP_TYPE) GetDescriptorHandleIncrementSize; // 15
     extern(Windows) HRESULT function(void*, uint, const(void)*, size_t, const(GUID)*, void**) CreateRootSignature; // 16
-    void*  _CreateConstantBufferView;                                      // 17
+    extern(Windows) void function(void*, const(D3D12_CONSTANT_BUFFER_VIEW_DESC)*, D3D12_CPU_DESCRIPTOR_HANDLE) CreateConstantBufferView; // 17
     void*  _CreateShaderResourceView;                                      // 18
     extern(Windows) void function(void*, ID3D12Resource*, ID3D12Resource*, const(D3D12_UNORDERED_ACCESS_VIEW_DESC)*, D3D12_CPU_DESCRIPTOR_HANDLE) CreateUnorderedAccessView; // 19
     void*[4] _renderAndDepthViews;                                         // 20-23
@@ -569,7 +574,7 @@ struct ID3D12ResourceVtbl {
     extern(Windows) HRESULT function(void*, uint, const(D3D12_RANGE)*, void**) Map;    // 7
     extern(Windows) void function(void*, uint, const(D3D12_RANGE)*) Unmap;             // 8
     void*  _GetDesc;                       // 9
-    void*  _GetGPUVirtualAddress;          // 10
+    extern(Windows) ulong function(void*) GetGPUVirtualAddress;          // 10
     void*  _WriteToSubresource;            // 11
     void*  _ReadFromSubresource;           // 12
     void*  _GetHeapProperties;             // 13

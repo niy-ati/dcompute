@@ -14,23 +14,38 @@ struct Program
 {
     const(ubyte)[] dxilBlob;   // raw DXIL container bytes (DXBC header)
 
-    /// Build a Root Signature for N UAV buffers at u0..u(N-1), space0.
-    /// This matches the LDC DirectX target's ABI where each GlobalPointer
-    /// argument maps to a consecutive UAV binding.
-    private ID3D12RootSignature buildRootSignature(ID3D12Device device, uint numUAVs)
+    /// Build a Root Signature for N UAV buffers at u0..u(N-1), space0,
+    /// and optionally 1 CBV for scalar constants at c0, space0.
+    private ID3D12RootSignature buildRootSignature(ID3D12Device device, uint numUAVs, bool hasCBV)
     {
-        D3D12_DESCRIPTOR_RANGE1 range;
-        range.RangeType          = D3D12_DESCRIPTOR_RANGE_TYPE.UAV;
-        range.NumDescriptors     = numUAVs;
-        range.BaseShaderRegister = 0;
-        range.RegisterSpace      = 0;
-        range.Flags              = D3D12_DESCRIPTOR_RANGE_FLAGS.DESCRIPTORS_VOLATILE;
+        D3D12_DESCRIPTOR_RANGE1[2] ranges;
+        uint numRanges = 0;
+
+        if (numUAVs > 0)
+        {
+            ranges[numRanges].RangeType          = D3D12_DESCRIPTOR_RANGE_TYPE.UAV;
+            ranges[numRanges].NumDescriptors     = numUAVs;
+            ranges[numRanges].BaseShaderRegister = 0;
+            ranges[numRanges].RegisterSpace      = 0;
+            ranges[numRanges].Flags              = D3D12_DESCRIPTOR_RANGE_FLAGS.DESCRIPTORS_VOLATILE;
+            numRanges++;
+        }
+
+        if (hasCBV)
+        {
+            ranges[numRanges].RangeType          = D3D12_DESCRIPTOR_RANGE_TYPE.CBV;
+            ranges[numRanges].NumDescriptors     = 1;
+            ranges[numRanges].BaseShaderRegister = 0;
+            ranges[numRanges].RegisterSpace      = 0;
+            ranges[numRanges].Flags              = D3D12_DESCRIPTOR_RANGE_FLAGS.DESCRIPTORS_VOLATILE;
+            numRanges++;
+        }
 
         D3D12_ROOT_PARAMETER1 param;
         param.ParameterType              = D3D12_ROOT_PARAMETER_TYPE.DESCRIPTOR_TABLE;
         param.ShaderVisibility           = D3D12_SHADER_VISIBILITY.ALL;
-        param.DescriptorTable.NumDescriptorRanges = 1;
-        param.DescriptorTable.pDescriptorRanges   = &range;
+        param.DescriptorTable.NumDescriptorRanges = numRanges;
+        param.DescriptorTable.pDescriptorRanges   = ranges.ptr;
 
         D3D12_VERSIONED_ROOT_SIGNATURE_DESC rsDesc;
         rsDesc.Version                    = D3D_ROOT_SIGNATURE_VERSION._1_1;
@@ -66,9 +81,8 @@ struct Program
         return rootSig;
     }
 
-    /// Create a kernel (PSO) by name, with N UAV bindings.
-    /// numUAVs defaults to 1 (single u0 — matches harness_kernel.d).
-    Kernel!void getKernelByName(immutable(char)* name, uint numUAVs = 1)
+    /// Create a kernel (PSO) by name, with N UAV bindings and optional CBV.
+    Kernel!void getKernelByName(immutable(char)* name, uint numUAVs = 1, bool hasCBV = false)
     {
         Kernel!void ret;
 
@@ -77,7 +91,7 @@ struct Program
             return ret;
 
         // Build the root signature dynamically based on argument count
-        ret.rootSignature = buildRootSignature(device, numUAVs);
+        ret.rootSignature = buildRootSignature(device, numUAVs, hasCBV);
         if (ret.rootSignature.lpVtbl is null)
             return ret;
 
@@ -107,12 +121,11 @@ struct Program
     /// Compile-time kernel lookup (mirrors CUDA Program.getKernel).
     Kernel!(typeof(k)) getKernel(alias k)()
     {
-        // Count the number of GlobalPointer arguments to determine UAV count
-        import std.traits : Parameters;
-        alias Params = Parameters!(typeof(k));
-        enum numUAVs = Params.length > 0 ? Params.length : 1;
+        import dcompute.driver.d3d12.traits : countUAVs, countScalars;
+        enum numUAVs = countUAVs!k;
+        enum hasCBV  = countScalars!k > 0;
 
-        return cast(typeof(return)) getKernelByName(k.mangleof.ptr, numUAVs);
+        return cast(typeof(return)) getKernelByName(k.mangleof.ptr, numUAVs > 0 ? numUAVs : 1, hasCBV);
     }
 
     /// Load a DXIL blob from a file path.

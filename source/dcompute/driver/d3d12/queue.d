@@ -128,13 +128,15 @@ struct Queue
                 auto kernel = Program.globalProgram.getKernel!k();
                 if (!kernel.isValid()) return;
 
-                enum numArgs = args.length;
+                import dcompute.driver.d3d12.traits : isBufferArg, countUAVs, countScalars, scalarSize;
+
+                enum numUAVs   = countUAVs!k;
+                enum numScalars= countScalars!k;
+                enum totalDescriptors = (numUAVs > 0 ? numUAVs : 1) + (numScalars > 0 ? 1 : 0);
 
                 // 1. Allocate a Shader-Visible Descriptor Heap for this dispatch.
-                // In a real driver, this would be a ring buffer or pool, but for now
-                // we allocate one per dispatch.
                 D3D12_DESCRIPTOR_HEAP_DESC heapDesc;
-                heapDesc.NumDescriptors = numArgs > 0 ? numArgs : 1;
+                heapDesc.NumDescriptors = totalDescriptors;
                 heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE.CBV_SRV_UAV;
                 heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAGS.SHADER_VISIBLE;
                 heapDesc.NodeMask = 0;
@@ -153,11 +155,11 @@ struct Queue
                 D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = (*descHeap.lpVtbl).GetCPUDescriptorHandleForHeapStart(cast(void*)&descHeap);
                 D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = (*descHeap.lpVtbl).GetGPUDescriptorHandleForHeapStart(cast(void*)&descHeap);
 
-                // 2. Iterate arguments and map them to UAV views dynamically
+                // 2. Map Buffer arguments to UAV views dynamically
+                size_t uavSlot = 0;
                 static foreach (i, arg; args)
                 {
-                    // arg is a Buffer!T (since it was a GlobalPointer!T in the kernel)
-                    // We need to create a UAV for its gpuResource
+                    static if (isBufferArg!(typeof(arg)))
                     {
                         D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc;
                         uavDesc.Format = DXGI_FORMAT.UNKNOWN;
@@ -169,10 +171,76 @@ struct Queue
                         uavDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAGS.NONE;
 
                         D3D12_CPU_DESCRIPTOR_HANDLE currentHandle = cpuHandle;
-                        currentHandle.ptr += i * descriptorSize;
+                        currentHandle.ptr += uavSlot * descriptorSize;
 
                         (*q.device.lpVtbl).CreateUnorderedAccessView(
                             cast(void*)&q.device, arg.gpuResource, null, &uavDesc, currentHandle
+                        );
+                        uavSlot++;
+                    }
+                }
+
+                // 3. Map scalar arguments to a Constant Buffer View (CBV c0) if present
+                ID3D12Resource cbResource;
+                static if (numScalars > 0)
+                {
+                    enum rawSize = scalarSize!k;
+                    enum alignedCBSize = (rawSize + 255) & ~255; // 256-byte alignment rule for D3D12 CBVs
+
+                    D3D12_HEAP_PROPERTIES hp;
+                    hp.Type = D3D12_HEAP_TYPE.UPLOAD;
+
+                    D3D12_RESOURCE_DESC rd;
+                    rd.Dimension        = D3D12_RESOURCE_DIMENSION.BUFFER;
+                    rd.Width            = alignedCBSize;
+                    rd.Height           = 1;
+                    rd.DepthOrArraySize = 1;
+                    rd.MipLevels        = 1;
+                    rd.SampleDesc.Count = 1;
+                    rd.Layout           = D3D12_TEXTURE_LAYOUT.ROW_MAJOR;
+                    rd.Flags            = D3D12_RESOURCE_FLAGS.NONE;
+
+                    (*q.device.lpVtbl).CreateCommittedResource(
+                        cast(void*)&q.device,
+                        &hp,
+                        D3D12_HEAP_FLAGS.NONE,
+                        &rd,
+                        D3D12_RESOURCE_STATES.GENERIC_READ,
+                        null,
+                        &IID_ID3D12Resource,
+                        cast(void**)&cbResource
+                    );
+
+                    if (cbResource.lpVtbl !is null)
+                    {
+                        void* mapped;
+                        D3D12_RANGE readRange = D3D12_RANGE(0, 0);
+                        (*cbResource.lpVtbl).Map(cast(void*)&cbResource, 0, &readRange, &mapped);
+                        if (mapped !is null)
+                        {
+                            size_t offset = 0;
+                            static foreach (i, arg; args)
+                            {
+                                static if (!isBufferArg!(typeof(arg)))
+                                {
+                                    import core.stdc.string : memcpy;
+                                    memcpy(mapped + offset, &arg, arg.sizeof);
+                                    offset += arg.sizeof;
+                                }
+                            }
+                            D3D12_RANGE writeRange = D3D12_RANGE(0, alignedCBSize);
+                            (*cbResource.lpVtbl).Unmap(cast(void*)&cbResource, 0, &writeRange);
+                        }
+
+                        D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc;
+                        cbvDesc.BufferLocation = (*cbResource.lpVtbl).GetGPUVirtualAddress(cast(void*)&cbResource);
+                        cbvDesc.SizeInBytes    = cast(uint)alignedCBSize;
+
+                        D3D12_CPU_DESCRIPTOR_HANDLE cbvHandle = cpuHandle;
+                        cbvHandle.ptr += uavSlot * descriptorSize;
+
+                        (*q.device.lpVtbl).CreateConstantBufferView(
+                            cast(void*)&q.device, &cbvDesc, cbvHandle
                         );
                     }
                 }

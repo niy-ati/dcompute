@@ -1,6 +1,7 @@
 module dcompute.driver.d3d12.device;
 
 import dcompute.driver.d3d12.bindings;
+import dcompute.driver.d3d12.error;
 
 /// D3D12 device: wraps adapter enumeration and ID3D12Device creation.
 /// Mirrors dcompute.driver.cuda.device — one Device per physical adapter.
@@ -57,8 +58,7 @@ struct Device
             &IID_ID3D12Device,
             cast(void**)&ret.raw
         );
-        if (FAILED(hr))
-            ret.raw = null;
+        checkErrors(hr);
         return ret;
     }
 

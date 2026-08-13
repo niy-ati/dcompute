@@ -2,6 +2,7 @@ module dcompute.driver.d3d12.buffer;
 
 import dcompute.driver.d3d12.bindings;
 import dcompute.driver.d3d12.device;
+import dcompute.driver.d3d12.error;
 
 /// Copy direction for host ↔ device transfers.
 enum Copy {
@@ -49,7 +50,7 @@ struct Buffer(T)
         rd.Layout           = D3D12_TEXTURE_LAYOUT.ROW_MAJOR;
         rd.Flags            = D3D12_RESOURCE_FLAGS.ALLOW_UNORDERED_ACCESS;
 
-        device.CreateCommittedResource(
+        auto hr = device.CreateCommittedResource(
             &hp,
             D3D12_HEAP_FLAGS.NONE,
             &rd,
@@ -58,6 +59,7 @@ struct Buffer(T)
             &IID_ID3D12Resource,
             cast(void**)&gpuResource
         );
+        checkErrors(hr);
     }
 
     this(T[] arr)
@@ -85,7 +87,8 @@ struct Buffer(T)
             // 2. Map upload buffer, copy host data in
             void* mapped;
             D3D12_RANGE readRange = D3D12_RANGE(0, 0); // we won't read
-            uploadResource.Map(0, &readRange, &mapped);
+            auto hr = uploadResource.Map(0, &readRange, &mapped);
+            checkErrors(hr);
             if (mapped !is null)
             {
                 import core.stdc.string : memcpy;
@@ -120,6 +123,7 @@ struct Buffer(T)
         void* mapped;
         D3D12_RANGE readRange = D3D12_RANGE(0, numElements * T.sizeof);
         auto hr = readbackResource.Map(0, &readRange, &mapped);
+        checkErrors(hr);
         if (SUCCEEDED(hr) && mapped !is null)
         {
             import core.stdc.string : memcpy;
@@ -145,7 +149,7 @@ struct Buffer(T)
         rd.Flags            = D3D12_RESOURCE_FLAGS.NONE;
 
         ID3D12Resource res;
-        device.CreateCommittedResource(
+        auto hr = device.CreateCommittedResource(
             &hp,
             D3D12_HEAP_FLAGS.NONE,
             &rd,
@@ -154,6 +158,7 @@ struct Buffer(T)
             &IID_ID3D12Resource,
             cast(void**)&res
         );
+        checkErrors(hr);
         return res;
     }
 

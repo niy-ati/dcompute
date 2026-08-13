@@ -5,20 +5,38 @@ import dcompute.driver.d3d12.device;
 import dcompute.driver.d3d12.program;
 import dcompute.driver.d3d12.runtime;
 import dcompute.driver.d3d12.buffer;
+import dcompute.driver.d3d12.event;
+import dcompute.driver.d3d12.error;
+
+/// Structure to hold resources that are currently executing on the GPU.
+/// D3D12 forbids resetting an allocator that is still in-flight.
+struct InFlightResource {
+    ID3D12CommandAllocator    allocator;
+    ID3D12GraphicsCommandList commandList;
+    ulong                     targetFence; // The fence value when this will be free
+    ID3D12Resource[]          pendingReleases; // Resources to release when this fence passes
+}
 
 /// A command queue in D3D12. Mirrors dcompute.driver.cuda.queue.
 ///
 /// Handles command list recording, descriptor heap allocation for kernel arguments,
-/// and dispatching compute workloads.
+/// and dispatching compute workloads asynchronously.
 struct Queue
 {
     ID3D12CommandQueue        raw;
-    ID3D12CommandAllocator    allocator;
-    ID3D12GraphicsCommandList commandList;
     ID3D12Fence               fence;
     ulong                     fenceValue;
     HANDLE                    fenceEvent;
     ID3D12Device              device; // cached
+
+    // Ring-buffer for true async execution
+    InFlightResource[]        inFlightPool;
+    
+    // Bump-allocator Descriptor Heap (Shader Visible)
+    ID3D12DescriptorHeap      globalDescriptorHeap;
+    uint                      descriptorIncrementSize;
+    uint                      currentDescriptorOffset;
+    enum                      MAX_DESCRIPTORS = 65536;
 
     this(bool async)
     {
@@ -33,50 +51,104 @@ struct Queue
         auto hr = device.CreateCommandQueue(
             &qDesc, &IID_ID3D12CommandQueue, cast(void**)&raw
         );
-        if (FAILED(hr)) return;
+        checkErrors(hr);
 
-        // 2. Create Command Allocator
-        hr = device.CreateCommandAllocator(
-            D3D12_COMMAND_LIST_TYPE.DIRECT, &IID_ID3D12CommandAllocator, cast(void**)&allocator
-        );
-        if (FAILED(hr)) return;
-
-        // 3. Create Command List
-        hr = device.CreateCommandList(
-            0, D3D12_COMMAND_LIST_TYPE.DIRECT, allocator, null, &IID_ID3D12GraphicsCommandList, cast(void**)&commandList
-        );
-        if (FAILED(hr)) return;
-
-        // Command lists are created in the recording state, but our pattern
-        // opens/closes around dispatches. We close it immediately here.
-        commandList.Close();
-
-        // 4. Create Sync Fence
+        // 2. Create Sync Fence
         hr = device.CreateFence(
             0, D3D12_FENCE_FLAGS.NONE, &IID_ID3D12Fence, cast(void**)&fence
         );
-        if (FAILED(hr)) return;
+        checkErrors(hr);
         
         fenceValue = 1;
         fenceEvent = CreateEventW(null, 0 /*FALSE*/, 0 /*FALSE*/, null);
+
+        // 3. Create a single large Shader Visible Descriptor Heap
+        D3D12_DESCRIPTOR_HEAP_DESC heapDesc;
+        heapDesc.NumDescriptors = MAX_DESCRIPTORS;
+        heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE.CBV_SRV_UAV;
+        heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAGS.SHADER_VISIBLE;
+        heapDesc.NodeMask = 0;
+
+        hr = device.CreateDescriptorHeap(
+            &heapDesc, &IID_ID3D12DescriptorHeap, cast(void**)&globalDescriptorHeap
+        );
+        checkErrors(hr);
+
+        descriptorIncrementSize = device.GetDescriptorHandleIncrementSize(
+            D3D12_DESCRIPTOR_HEAP_TYPE.CBV_SRV_UAV
+        );
+        currentDescriptorOffset = 0;
     }
 
     @property bool async()
     {
-        return false;
+        return true; // We are now truly async!
     }
 
-    /// Wait for all submitted work to complete on the GPU.
-    void wait()
+    /// Retrieve an available command allocator/list from the pool,
+    /// or create a new one if all are currently executing.
+    private InFlightResource getAvailableResource()
     {
-        if (raw is null || fence is null) return;
+        ulong completed = fence.GetCompletedValue();
 
-        // Signal the fence from the GPU
+        // Search for an allocator the GPU has finished using
+        foreach (ref res; inFlightPool)
+        {
+            if (res.targetFence <= completed)
+            {
+                // GPU is done with this! We can safely reset it.
+                res.allocator.Reset();
+                res.commandList.Reset(res.allocator, null);
+                
+                foreach (r; res.pendingReleases)
+                {
+                    if (r !is null) r.Release();
+                }
+                res.pendingReleases.length = 0;
+                
+                return res;
+            }
+        }
+
+        // None available, create a new one (expands the pool)
+        InFlightResource newRes;
+        auto hr = device.CreateCommandAllocator(
+            D3D12_COMMAND_LIST_TYPE.DIRECT, &IID_ID3D12CommandAllocator, cast(void**)&newRes.allocator
+        );
+        checkErrors(hr);
+        hr = device.CreateCommandList(
+            0, D3D12_COMMAND_LIST_TYPE.DIRECT, newRes.allocator, null, &IID_ID3D12GraphicsCommandList, cast(void**)&newRes.commandList
+        );
+        checkErrors(hr);
+
+        // Store in pool
+        newRes.targetFence = 0; // Available immediately
+        inFlightPool ~= newRes;
+        return newRes;
+    }
+
+    /// Internal helper: Execute a copy between resources synchronously for now
+    void executeCopy(ID3D12Resource dst, ID3D12Resource src)
+    {
+        if (raw is null) return;
+        
+        auto res = getAvailableResource();
+
+        res.commandList.CopyResource(dst, src);
+        res.commandList.Close();
+
+        auto ppCommandLists = cast(ID3D12CommandList)res.commandList;
+        raw.ExecuteCommandLists(1, &ppCommandLists);
+        
+        // Signal fence
         ulong fenceToWaitFor = fenceValue;
         raw.Signal(fence, fenceToWaitFor);
         fenceValue++;
+        
+        // Update the resource in the pool so it knows when it's free
+        res.targetFence = fenceToWaitFor;
 
-        // Wait on CPU
+        // Synchronous wait for copies
         if (fence.GetCompletedValue() < fenceToWaitFor)
         {
             fence.SetEventOnCompletion(fenceToWaitFor, fenceEvent);
@@ -84,34 +156,16 @@ struct Queue
         }
     }
 
-    /// Internal helper: Execute a copy between resources (e.g. upload to default)
-    void executeCopy(ID3D12Resource dst, ID3D12Resource src)
-    {
-        if (commandList is null) return;
-        
-        allocator.Reset();
-        commandList.Reset(allocator, null);
-
-        commandList.CopyResource(dst, src);
-
-        commandList.Close();
-
-        auto ppCommandLists = cast(ID3D12CommandList)commandList;
-        raw.ExecuteCommandLists(1, &ppCommandLists);
-        
-        wait();
-    }
-
-    /// The core dispatch function. Maps D arguments to D3D12 Descriptors dynamically.
+    /// The core dispatch function. Returns an Event for async synchronization!
     auto enqueue(alias k)(uint[3] _grid, uint[3] _block, uint _sharedMem = 0)
     {
         static struct Call
         {
-            Queue q;
+            Queue* q;
             uint[3] grid, block;
             uint sharedMem;
             
-            this(Queue _q, uint[3] _grid, uint[3] _block, uint _sharedMem)
+            this(Queue* _q, uint[3] _grid, uint[3] _block, uint _sharedMem)
             {
                 q = _q;
                 grid = _grid;
@@ -119,43 +173,47 @@ struct Queue
                 sharedMem = _sharedMem;
             }
 
-            // This is the metaprogramming magic.
-            // HostArgsOf gets the host-side types for the kernel (e.g. Buffer!float).
-            void opCall(HostArgsOf!(typeof(k)) args)
+            // Returns an Event instead of blocking!
+            Event opCall(HostArgsOf!(typeof(k)) args)
             {
-                if (q.commandList is null) return;
+                if (q.raw is null) return Event(q, 0);
 
                 auto kernel = Program.globalProgram.getKernel!k();
-                if (!kernel.isValid()) return;
+                if (!kernel.isValid()) return Event(q, 0);
 
-                import dcompute.driver.d3d12.traits : isBufferArg, countUAVs, countScalars, scalarSize;
+                import dcompute.driver.d3d12.traits : isBufferArg, countUAVs, countScalars, scalarSize, checkKernelABI;
+
+                // 0. Enforce DCompute Driver ABI at compile-time
+                checkKernelABI!k;
 
                 enum numUAVs   = countUAVs!k;
                 enum numScalars= countScalars!k;
                 enum totalDescriptors = (numUAVs > 0 ? numUAVs : 1) + (numScalars > 0 ? 1 : 0);
 
-                // 1. Allocate a Shader-Visible Descriptor Heap for this dispatch.
-                D3D12_DESCRIPTOR_HEAP_DESC heapDesc;
-                heapDesc.NumDescriptors = totalDescriptors;
-                heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE.CBV_SRV_UAV;
-                heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAGS.SHADER_VISIBLE;
-                heapDesc.NodeMask = 0;
+                // 1. Grab sub-allocation from global descriptor heap
+                if (q.currentDescriptorOffset + totalDescriptors >= q.MAX_DESCRIPTORS)
+                {
+                    // Ring buffer wrap-around: wait for everything to finish, then reset offset
+                    ulong waitVal = q.fenceValue - 1;
+                    if (q.fence.GetCompletedValue() < waitVal)
+                    {
+                        q.fence.SetEventOnCompletion(waitVal, q.fenceEvent);
+                        WaitForSingleObject(q.fenceEvent, INFINITE);
+                    }
+                    q.currentDescriptorOffset = 0;
+                }
 
-                ID3D12DescriptorHeap descHeap;
-                q.device.CreateDescriptorHeap(
-                    &heapDesc, &IID_ID3D12DescriptorHeap, cast(void**)&descHeap
-                );
+                uint offset = q.currentDescriptorOffset;
+                q.currentDescriptorOffset += totalDescriptors;
 
-                if (descHeap is null) return;
-
-                uint descriptorSize = q.device.GetDescriptorHandleIncrementSize(
-                    D3D12_DESCRIPTOR_HEAP_TYPE.CBV_SRV_UAV
-                );
+                D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = q.globalDescriptorHeap.GetCPUDescriptorHandleForHeapStart();
+                D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = q.globalDescriptorHeap.GetGPUDescriptorHandleForHeapStart();
                 
-                D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = descHeap.GetCPUDescriptorHandleForHeapStart();
-                D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = descHeap.GetGPUDescriptorHandleForHeapStart();
+                cpuHandle.ptr += offset * q.descriptorIncrementSize;
+                gpuHandle.ptr += offset * q.descriptorIncrementSize;
 
-                // 2. Map Buffer arguments to UAV views dynamically
+                // DCompute ABI Rule 1: Map Buffer arguments to UAV views dynamically
+                // Vulkan equivalent: vkUpdateDescriptorSets for descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER
                 size_t uavSlot = 0;
                 static foreach (i, arg; args)
                 {
@@ -171,7 +229,7 @@ struct Queue
                         uavDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAGS.NONE;
 
                         D3D12_CPU_DESCRIPTOR_HANDLE currentHandle = cpuHandle;
-                        currentHandle.ptr += uavSlot * descriptorSize;
+                        currentHandle.ptr += uavSlot * q.descriptorIncrementSize;
 
                         q.device.CreateUnorderedAccessView(
                             arg.gpuResource, null, &uavDesc, currentHandle
@@ -180,7 +238,8 @@ struct Queue
                     }
                 }
 
-                // 3. Map scalar arguments to a Constant Buffer View (CBV c0) if present
+                // DCompute ABI Rule 2: Map scalar arguments to a Constant Buffer View (CBV c0) if present
+                // Vulkan equivalent: vkUpdateDescriptorSets for descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
                 ID3D12Resource cbResource;
                 static if (numScalars > 0)
                 {
@@ -200,7 +259,7 @@ struct Queue
                     rd.Layout           = D3D12_TEXTURE_LAYOUT.ROW_MAJOR;
                     rd.Flags            = D3D12_RESOURCE_FLAGS.NONE;
 
-                    q.device.CreateCommittedResource(
+                    auto hr = q.device.CreateCommittedResource(
                         &hp,
                         D3D12_HEAP_FLAGS.NONE,
                         &rd,
@@ -209,6 +268,7 @@ struct Queue
                         &IID_ID3D12Resource,
                         cast(void**)&cbResource
                     );
+                    checkErrors(hr);
 
                     if (cbResource !is null)
                     {
@@ -217,14 +277,14 @@ struct Queue
                         cbResource.Map(0, &readRange, &mapped);
                         if (mapped !is null)
                         {
-                            size_t offset = 0;
+                            size_t byteOffset = 0;
                             static foreach (i, arg; args)
                             {
                                 static if (!isBufferArg!(typeof(arg)))
                                 {
                                     import core.stdc.string : memcpy;
-                                    memcpy(mapped + offset, &arg, arg.sizeof);
-                                    offset += arg.sizeof;
+                                    memcpy(mapped + byteOffset, &arg, arg.sizeof);
+                                    byteOffset += arg.sizeof;
                                 }
                             }
                             D3D12_RANGE writeRange = D3D12_RANGE(0, alignedCBSize);
@@ -236,49 +296,64 @@ struct Queue
                         cbvDesc.SizeInBytes    = cast(uint)alignedCBSize;
 
                         D3D12_CPU_DESCRIPTOR_HANDLE cbvHandle = cpuHandle;
-                        cbvHandle.ptr += uavSlot * descriptorSize;
+                        cbvHandle.ptr += uavSlot * q.descriptorIncrementSize;
 
                         q.device.CreateConstantBufferView(
                             &cbvDesc, cbvHandle
                         );
+                        
+                        // Schedule it for release once this dispatch's fence is passed
+                        foreach(ref poolRes; q.inFlightPool) {
+                            if (poolRes.allocator == res.allocator) {
+                                poolRes.pendingReleases ~= cbResource;
+                                break;
+                            }
+                        }
                     }
                 }
 
-                // 4. Record command list
-                q.allocator.Reset();
-                q.commandList.Reset(q.allocator, kernel.pipelineState);
+                // 4. Record command list using an available allocator pool resource
+                auto res = q.getAvailableResource();
 
-                q.commandList.SetComputeRootSignature(kernel.rootSignature);
+                // PSO might be different, so we set it
+                res.commandList.SetPipelineState(kernel.pipelineState);
+                res.commandList.SetComputeRootSignature(kernel.rootSignature);
                 
-                auto ppHeaps = cast(ID3D12DescriptorHeap)descHeap;
-                q.commandList.SetDescriptorHeaps(1, &ppHeaps);
+                auto ppHeaps = cast(ID3D12DescriptorHeap)q.globalDescriptorHeap;
+                res.commandList.SetDescriptorHeaps(1, &ppHeaps);
 
-                q.commandList.SetComputeRootDescriptorTable(0, gpuHandle);
+                res.commandList.SetComputeRootDescriptorTable(0, gpuHandle);
 
                 // 5. Dispatch
-                // DCompute kernel blocks map directly to Dispatch thread groups.
-                q.commandList.Dispatch(grid[0], grid[1], grid[2]);
+                res.commandList.Dispatch(grid[0], grid[1], grid[2]);
+                res.commandList.Close();
 
-                q.commandList.Close();
-
-                // 6. Execute
-                auto ppCommandLists = cast(ID3D12CommandList)q.commandList;
+                // 6. Execute Async!
+                auto ppCommandLists = cast(ID3D12CommandList)res.commandList;
                 q.raw.ExecuteCommandLists(1, &ppCommandLists);
 
-                // Wait immediately to keep memory safe (simplification)
-                q.wait();
+                // Signal fence
+                ulong targetFence = q.fenceValue;
+                q.raw.Signal(q.fence, targetFence);
+                q.fenceValue++;
 
-                // Cleanup temporary heaps and resources
-                descHeap.Release();
-                static if (numScalars > 0)
+                // Update the resource pool with the fence value so we know when it's free
+                // Note: since we copied by value, we must update the actual array element
+                foreach (ref poolRes; q.inFlightPool)
                 {
-                    if (cbResource !is null)
-                        cbResource.Release();
+                    if (poolRes.allocator == res.allocator)
+                    {
+                        poolRes.targetFence = targetFence;
+                        break;
+                    }
                 }
+
+                // Return the event immediately instead of blocking!
+                return Event(q, targetFence);
             }
         }
         
-        return Call(this, _grid, _block, _sharedMem);
+        return Call(&this, _grid, _block, _sharedMem);
     }
 }
 

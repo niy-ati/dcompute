@@ -71,3 +71,32 @@ private size_t getScalarSize(Args...)() {
     }
     return sz;
 }
+
+/// Validates that a kernel function complies with the DCompute Driver ABI.
+/// The ABI requires:
+/// 1. All Buffer (GlobalPointer) arguments are mapped sequentially to Space 0/Set 0.
+/// 2. All Scalar arguments must be Plain Old Data (POD) / trivially copyable.
+/// 3. The maximum scalar constant buffer size must not exceed limits (e.g. 64KB).
+template checkKernelABI(alias k) {
+    import std.traits : isAggregateType, hasUnsharedAliasing;
+    
+    enum checkKernelABI = enforceABI!(HostArgsOf!(typeof(k)))();
+}
+
+private bool enforceABI(Args...)() {
+    static foreach (i, arg; Args) {
+        static if (!isBufferArg!arg) {
+            static assert(!hasUnsharedAliasing!arg, 
+                "DCompute ABI Error: Scalar argument `" ~ arg.stringof ~ "` contains unshared aliasing (pointers/references). " ~
+                "Kernel arguments must be trivially copyable PODs or GlobalPointers.");
+            static assert(!is(arg == class), 
+                "DCompute ABI Error: Kernel scalar arguments cannot be classes.");
+        }
+    }
+    
+    // Constant buffers must typically fit in 64KB for maximum portability across hardware.
+    static assert(getScalarSize!(Args)() <= 65536,
+        "DCompute ABI Error: Total size of scalar arguments exceeds the 64KB constant buffer limit.");
+        
+    return true;
+}

@@ -3,6 +3,7 @@ module dcompute.driver.d3d12.program;
 import dcompute.driver.d3d12.bindings;
 import dcompute.driver.d3d12.kernel;
 import dcompute.driver.d3d12.device;
+import dcompute.driver.d3d12.error;
 
 /// D3D12 program: loads DXIL byte code and creates Pipeline State Objects.
 /// Mirrors dcompute.driver.cuda.program.
@@ -13,30 +14,35 @@ import dcompute.driver.d3d12.device;
 struct Program
 {
     const(ubyte)[] dxilBlob;   // raw DXIL container bytes (DXBC header)
+    private Kernel!void[string] _kernelCache; // cache compiled PSOs to prevent massive leaks and CPU stalls
 
-    /// Build a Root Signature for N UAV buffers at u0..u(N-1), space0,
-    /// and optionally 1 CBV for scalar constants at c0, space0.
+    /// DCompute Formal ABI Mapping:
+    /// Constructs a Root Signature mapping D host arguments to DXIL/SPIR-V expected registers.
+    /// - Rule 1 (Global Memory): N UAV buffers map sequentially to u0..u(N-1), space0.
+    /// - Rule 2 (Scalars): All scalar arguments are packed into a single CBV at c0, space0.
     private ID3D12RootSignature buildRootSignature(ID3D12Device device, uint numUAVs, bool hasCBV)
     {
         D3D12_DESCRIPTOR_RANGE1[2] ranges;
         uint numRanges = 0;
 
+        // ABI Rule 1: Buffer arguments -> UAV Descriptor Table (u0..uN)
         if (numUAVs > 0)
         {
             ranges[numRanges].RangeType          = D3D12_DESCRIPTOR_RANGE_TYPE.UAV;
             ranges[numRanges].NumDescriptors     = numUAVs;
-            ranges[numRanges].BaseShaderRegister = 0;
-            ranges[numRanges].RegisterSpace      = 0;
+            ranges[numRanges].BaseShaderRegister = 0; // Starts at u0
+            ranges[numRanges].RegisterSpace      = 0; // Space 0 (matches Vulkan Set 0)
             ranges[numRanges].Flags              = D3D12_DESCRIPTOR_RANGE_FLAGS.DESCRIPTORS_VOLATILE;
             numRanges++;
         }
 
+        // ABI Rule 2: Scalar arguments -> CBV Descriptor Table (c0)
         if (hasCBV)
         {
             ranges[numRanges].RangeType          = D3D12_DESCRIPTOR_RANGE_TYPE.CBV;
             ranges[numRanges].NumDescriptors     = 1;
-            ranges[numRanges].BaseShaderRegister = 0;
-            ranges[numRanges].RegisterSpace      = 0;
+            ranges[numRanges].BaseShaderRegister = 0; // Starts at c0
+            ranges[numRanges].RegisterSpace      = 0; // Space 0
             ranges[numRanges].Flags              = D3D12_DESCRIPTOR_RANGE_FLAGS.DESCRIPTORS_VOLATILE;
             numRanges++;
         }
@@ -58,7 +64,9 @@ struct Program
         ID3DBlob rsBlob, rsErr;
         auto hr = D3D12SerializeVersionedRootSignature(&rsDesc, &rsBlob, &rsErr);
         if (FAILED(hr))
-            return null;
+        {
+            checkErrors(hr); // Will throw
+        }
 
         ID3D12RootSignature rootSig;
         hr = device.CreateRootSignature(
@@ -74,15 +82,21 @@ struct Program
         if (rsErr !is null)
             rsErr.Release();
 
-        if (FAILED(hr))
-            return null;
+        checkErrors(hr);
 
         return rootSig;
     }
 
     /// Create a kernel (PSO) by name, with N UAV bindings and optional CBV.
-    Kernel!void getKernelByName(immutable(char)* name, uint numUAVs = 1, bool hasCBV = false)
+    /// Results are heavily cached because CreateComputePipelineState is incredibly expensive.
+    Kernel!void getKernelByName(string name, uint numUAVs = 1, bool hasCBV = false)
     {
+        // 1. Check the cache (O(1) fast path)
+        if (auto cached = name in _kernelCache)
+        {
+            return *cached;
+        }
+
         Kernel!void ret;
 
         auto device = Runtime.defaultDevice.raw;
@@ -110,8 +124,11 @@ struct Program
         if (FAILED(hr))
         {
             ret.rootSignature.Release();
-            ret = Kernel!void.init;
+            checkErrors(hr); // Will throw
         }
+
+        // 2. Cache it for all future dispatches!
+        _kernelCache[name] = ret;
 
         return ret;
     }
@@ -123,7 +140,8 @@ struct Program
         enum numUAVs = countUAVs!k;
         enum hasCBV  = countScalars!k > 0;
 
-        return cast(typeof(return)) getKernelByName(k.mangleof.ptr, numUAVs > 0 ? numUAVs : 1, hasCBV);
+        // Note: k.mangleof is a string at compile time
+        return cast(typeof(return)) getKernelByName(k.mangleof, numUAVs > 0 ? numUAVs : 1, hasCBV);
     }
 
     /// Load a DXIL blob from a file path.
@@ -176,6 +194,12 @@ struct Program
 
     void unload()
     {
+        foreach (k, kernel; _kernelCache)
+        {
+            if (kernel.pipelineState !is null) kernel.pipelineState.Release();
+            if (kernel.rootSignature !is null) kernel.rootSignature.Release();
+        }
+        _kernelCache.clear();
         dxilBlob = null;
     }
 }

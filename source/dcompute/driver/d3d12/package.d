@@ -10,3 +10,4 @@ public import dcompute.driver.d3d12.kernel;
 public import dcompute.driver.d3d12.platform;
 public import dcompute.driver.d3d12.program;
 public import dcompute.driver.d3d12.traits;
+public import dcompute.driver.d3d12.unified_buffer;

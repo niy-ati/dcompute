@@ -98,7 +98,8 @@ struct Buffer(T)
             }
 
             // 3. Execute GPU copy (uploadResource → gpuResource) via command list
-            // This requires a command queue — typically done via Queue.executeCopy()
+            import dcompute.driver.d3d12.runtime : Runtime;
+            Runtime.defaultQueue().executeCopy(gpuResource, uploadResource);
         }
         else static if (c == Copy.deviceToHost)
         {
@@ -109,8 +110,11 @@ struct Buffer(T)
             }
             if (readbackResource is null) return;
 
-            // After GPU copy completes (via Queue), map and read back:
-            // readBack() should be called after Queue.wait()
+            // 2. Execute GPU copy (gpuResource → readbackResource) via command list
+            import dcompute.driver.d3d12.runtime : Runtime;
+            Runtime.defaultQueue().executeCopy(readbackResource, gpuResource);
+            
+            // Note: readBack() should be called after this completes to map memory
         }
     }
 

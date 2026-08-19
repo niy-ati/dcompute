@@ -39,9 +39,9 @@ Device defaultDevice()
     return _defaultDevice;
 }
 
-Queue defaultQueue()
+Queue* defaultQueue()
 {
-    return _threadQueue;
+    return &_threadQueue;
 }
 
 private void _initPlatform()

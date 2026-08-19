@@ -85,6 +85,17 @@ struct Queue
         return true; // We are now truly async!
     }
 
+    /// Instructs the GPU command queue to wait for the given event (fence)
+    /// to reach its target value, without blocking the CPU.
+    /// Mirrors dcompute.driver.cuda.queue.wait(Event)
+    void wait(Event e)
+    {
+        if (raw is null || e.q is null || e.q.fence is null) return;
+        
+        auto hr = raw.Wait(e.q.fence, e.targetValue);
+        checkErrors(hr);
+    }
+
     /// Retrieve an available command allocator/list from the pool,
     /// or create a new one if all are currently executing.
     private InFlightResource getAvailableResource()

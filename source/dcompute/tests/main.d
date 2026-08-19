@@ -26,6 +26,10 @@ else version(DComputeTestCUDA) {
     import dcompute.driver.cuda.unified_buffer;
     import dcompute.driver.cuda;
 }
+else version(DComputeTestDirectX) {
+    import dcompute.driver.d3d12.unified_buffer;
+    import dcompute.driver.d3d12;
+}
 else
     static assert(false, "Need to test something!");
 
@@ -196,6 +200,91 @@ int main(string[] args)
             writeln("DCompute injected-PTX tests (fromModule / launch!) require LDC >= 1.43 " ~
                     "(D frontend __VERSION__ >= 2113); this compiler reports an older " ~
                     "__VERSION__ — skipping the CUDA embedded-PTX tests.");
+            return 0;
+        }
+    }
+
+    version(DComputeTestDirectX)
+    {
+        static if (__VERSION__ >= 2113)
+        {
+            // 1. Manual test
+            {
+                Platform.initialise();
+                auto devs = Platform.getDevices();
+                auto dev = devs.length > 0 ? devs[0] : Platform.getWarpDevice();
+
+                // D3D12 uses embedded DXIL blob
+                Program.globalProgram = Program.fromModule!("dcompute.tests.dummykernels")();
+                auto q = Queue(false);
+
+                Buffer!(float) b_res, b_x, b_y;
+                b_res = Buffer!(float)(res[]); scope(exit) b_res.release();
+                b_x   = Buffer!(float)(x[]);   scope(exit) b_x.release();
+                b_y   = Buffer!(float)(y[]);   scope(exit) b_y.release();
+
+                b_x.copy!(Copy.hostToDevice);
+                b_y.copy!(Copy.hostToDevice);
+
+                auto e = q.enqueue!(saxpy)([N,1,1],[1,1,1])(b_res, alpha, b_x, b_y, N);
+                q.wait(e); // test GPU-side sync
+                
+                b_res.copy!(Copy.deviceToHost);
+                q.finish(); // Ensure all transfers are done
+
+                // Validate
+                foreach(i; 0 .. N) enforce(res[i] == alpha * x[i] + y[i], "D3D12 Standard Buffer copy failed!");
+                res[] = 0.0f; // reset
+                Program.globalProgram.unload();
+                Program.globalProgram = Program();
+            }
+
+            // 2. Launch / USM test
+            {
+                Buffer!(float) b_res, b_x, b_y;
+                b_res = Buffer!(float)(res[]); scope(exit) b_res.release();
+                b_x   = Buffer!(float)(x[]);   scope(exit) b_x.release();
+                b_y   = Buffer!(float)(y[]);   scope(exit) b_y.release();
+
+                b_x.copy!(Copy.hostToDevice);
+                b_y.copy!(Copy.hostToDevice);
+        
+                launch!saxpy([N,1,1],[1,1,1], b_res, alpha, b_x, b_y, N);
+                b_res.copy!(Copy.deviceToHost);
+
+                defaultQueue().finish();
+
+                foreach(i; 0 .. N) enforce(res[i] == alpha * x[i] + y[i], "D3D12 Launch wrapper failed!");
+                res[] = 0.0f; // reset
+
+                // Unified Memory test
+                if (defaultDevice().supportsUnifiedMemory)
+                {
+                    writeln("\nDevice supports Unified Memory — running UnifiedBuffer test...");
+
+                    auto ub_x   = UnifiedBuffer!float(x[]);   scope(exit) ub_x.release();
+                    auto ub_y   = UnifiedBuffer!float(y[]);   scope(exit) ub_y.release();
+                    auto ub_res = UnifiedBuffer!float(N);     scope(exit) ub_res.release();
+
+                    launch!saxpy([N,1,1],[1,1,1], ub_res, alpha, ub_x, ub_y, N);
+                    defaultQueue().finish(); // synchronize
+
+                    foreach (i; 0 .. N)
+                        enforce(ub_res.hostSlice[i] == alpha * x[i] + y[i],
+                                "D3D12 Unified Memory verification failed!");
+
+                    writeln("D3D12 UnifiedBuffer test PASSED.");
+                }
+                else
+                {
+                    writeln("\nDevice does not support Unified Memory — skipping UnifiedBuffer test.");
+                }
+            }
+        }
+        else
+        {
+            writeln("DCompute injected-DXIL tests require LDC >= 1.43 " ~
+                    "(D frontend __VERSION__ >= 2113).");
             return 0;
         }
     }

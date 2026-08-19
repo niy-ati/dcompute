@@ -232,6 +232,92 @@ struct Queue
         }
     }
 
+    /// Internal helper: Execute a texture copy between resources.
+    void executeTextureCopy(const(D3D12_TEXTURE_COPY_LOCATION)* dst, const(D3D12_TEXTURE_COPY_LOCATION)* src,
+                            D3D12_RESOURCE_STATES srcStateBefore = D3D12_RESOURCE_STATES.UNORDERED_ACCESS,
+                            D3D12_RESOURCE_STATES dstStateBefore = D3D12_RESOURCE_STATES.COMMON)
+    {
+        if (raw is null) return;
+        
+        auto res = getAvailableResource();
+
+        // 1. Transition barriers
+        D3D12_RESOURCE_BARRIER[2] barriers;
+        uint numBarriers = 0;
+
+        if (srcStateBefore != D3D12_RESOURCE_STATES.COPY_SOURCE)
+        {
+            barriers[numBarriers].Type = D3D12_RESOURCE_BARRIER_TYPE.TRANSITION;
+            barriers[numBarriers].Flags = D3D12_RESOURCE_BARRIER_FLAGS.NONE;
+            barriers[numBarriers].Transition.pResource = cast(void*)src.pResource;
+            barriers[numBarriers].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            barriers[numBarriers].Transition.StateBefore = srcStateBefore;
+            barriers[numBarriers].Transition.StateAfter = D3D12_RESOURCE_STATES.COPY_SOURCE;
+            numBarriers++;
+        }
+
+        if (dstStateBefore != D3D12_RESOURCE_STATES.COPY_DEST)
+        {
+            barriers[numBarriers].Type = D3D12_RESOURCE_BARRIER_TYPE.TRANSITION;
+            barriers[numBarriers].Flags = D3D12_RESOURCE_BARRIER_FLAGS.NONE;
+            barriers[numBarriers].Transition.pResource = cast(void*)dst.pResource;
+            barriers[numBarriers].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            barriers[numBarriers].Transition.StateBefore = dstStateBefore;
+            barriers[numBarriers].Transition.StateAfter = D3D12_RESOURCE_STATES.COPY_DEST;
+            numBarriers++;
+        }
+
+        if (numBarriers > 0)
+            res.commandList.ResourceBarrier(numBarriers, barriers.ptr);
+
+        // 2. Execute the copy
+        res.commandList.CopyTextureRegion(dst, 0, 0, 0, src, null);
+
+        // 3. Restore states
+        numBarriers = 0;
+        if (srcStateBefore != D3D12_RESOURCE_STATES.COPY_SOURCE)
+        {
+            barriers[numBarriers].Type = D3D12_RESOURCE_BARRIER_TYPE.TRANSITION;
+            barriers[numBarriers].Flags = D3D12_RESOURCE_BARRIER_FLAGS.NONE;
+            barriers[numBarriers].Transition.pResource = cast(void*)src.pResource;
+            barriers[numBarriers].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            barriers[numBarriers].Transition.StateBefore = D3D12_RESOURCE_STATES.COPY_SOURCE;
+            barriers[numBarriers].Transition.StateAfter = srcStateBefore;
+            numBarriers++;
+        }
+
+        if (dstStateBefore != D3D12_RESOURCE_STATES.COPY_DEST)
+        {
+            barriers[numBarriers].Type = D3D12_RESOURCE_BARRIER_TYPE.TRANSITION;
+            barriers[numBarriers].Flags = D3D12_RESOURCE_BARRIER_FLAGS.NONE;
+            barriers[numBarriers].Transition.pResource = cast(void*)dst.pResource;
+            barriers[numBarriers].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            barriers[numBarriers].Transition.StateBefore = D3D12_RESOURCE_STATES.COPY_DEST;
+            barriers[numBarriers].Transition.StateAfter = dstStateBefore;
+            numBarriers++;
+        }
+
+        if (numBarriers > 0)
+            res.commandList.ResourceBarrier(numBarriers, barriers.ptr);
+
+        res.commandList.Close();
+
+        auto ppCommandLists = cast(ID3D12CommandList)res.commandList;
+        raw.ExecuteCommandLists(1, &ppCommandLists);
+        
+        ulong fenceToWaitFor = fenceValue;
+        raw.Signal(fence, fenceToWaitFor);
+        fenceValue++;
+        
+        res.targetFence = fenceToWaitFor;
+
+        if (fence.GetCompletedValue() < fenceToWaitFor)
+        {
+            fence.SetEventOnCompletion(fenceToWaitFor, fenceEvent);
+            WaitForSingleObject(fenceEvent, INFINITE);
+        }
+    }
+
     /// Drain all pending GPU work on this queue.
     /// Mirrors OpenCL's clFinish() — blocks the CPU until every
     /// command list submitted to this queue has completed execution.

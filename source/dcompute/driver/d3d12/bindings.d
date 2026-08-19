@@ -182,13 +182,21 @@ enum D3D12_ROOT_SIGNATURE_FLAGS : int {
 }
 
 enum DXGI_FORMAT : int {
-    UNKNOWN         = 0,
-    R32_TYPELESS    = 39,
-    R32_FLOAT       = 41,
-    R32_UINT        = 42,
-    R32G32_FLOAT    = 16,
-    R32G32B32_FLOAT = 6,
+    UNKNOWN            = 0,
     R32G32B32A32_FLOAT = 2,
+    R32G32B32A32_UINT  = 3,
+    R32G32B32_FLOAT    = 6,
+    R32G32_FLOAT       = 16,
+    R8G8B8A8_UNORM     = 28,
+    R8G8B8A8_UINT      = 30,
+    B8G8R8A8_UNORM     = 87,
+    R32_TYPELESS       = 39,
+    R32_FLOAT          = 41,
+    R32_UINT           = 42,
+    R16_FLOAT          = 54,
+    R16_UINT           = 57,
+    R8_UNORM           = 61,
+    R8_UINT            = 62,
 }
 
 enum D3D12_UAV_DIMENSION : int {
@@ -350,6 +358,42 @@ struct D3D12_UNORDERED_ACCESS_VIEW_DESC {
     D3D12_BUFFER_UAV Buffer;
 }
 
+enum D3D12_TEXTURE_COPY_TYPE : int {
+    SUBRESOURCE_INDEX = 0,
+    PLACED_FOOTPRINT  = 1,
+}
+
+struct D3D12_SUBRESOURCE_FOOTPRINT {
+    DXGI_FORMAT Format;
+    uint Width;
+    uint Height;
+    uint Depth;
+    uint RowPitch;
+}
+
+struct D3D12_PLACED_SUBRESOURCE_FOOTPRINT {
+    ulong Offset;
+    D3D12_SUBRESOURCE_FOOTPRINT Footprint;
+}
+
+struct D3D12_TEXTURE_COPY_LOCATION {
+    ID3D12Resource pResource;
+    D3D12_TEXTURE_COPY_TYPE Type;
+    union {
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT PlacedFootprint;
+        uint SubresourceIndex;
+    }
+}
+
+struct D3D12_BOX {
+    uint left;
+    uint top;
+    uint front;
+    uint right;
+    uint bottom;
+    uint back;
+}
+
 // ── GUIDs ──────────────────────────────────────────────────────────────────
 
 immutable GUID IID_IDXGIFactory4 = {
@@ -436,6 +480,8 @@ extern(Windows) interface ID3D12Device : ID3D12Object {
     void _pad33(); void _pad34(); void _pad35();
     void _pad36(); void _pad37();
     HRESULT CreateFence(ulong InitialValue, D3D12_FENCE_FLAGS Flags, const(GUID)* riid, void** ppFence);
+    HRESULT GetDeviceRemovedReason();
+    void GetCopyableFootprints(const(D3D12_RESOURCE_DESC)* pResourceDesc, uint FirstSubresource, uint NumSubresources, ulong BaseOffset, D3D12_PLACED_SUBRESOURCE_FOOTPRINT* pLayouts, uint* pNumRows, ulong* pRowSizeInBytes, ulong* pTotalBytes);
     void _pad39(); void _pad40(); void _pad41(); void _pad42(); void _pad43(); void _pad44(); void _pad45();
 }
 
@@ -462,7 +508,8 @@ extern(Windows) interface ID3D12GraphicsCommandList : ID3D12CommandList {
     HRESULT Reset(ID3D12CommandAllocator pAllocator, ID3D12PipelineState pInitialState);
     void _pad10(); void _pad11(); void _pad12();
     void Dispatch(uint ThreadGroupCountX, uint ThreadGroupCountY, uint ThreadGroupCountZ);
-    void _pad14(); void _pad15();
+    void _pad14();
+    void CopyTextureRegion(const(D3D12_TEXTURE_COPY_LOCATION)* pDst, uint DstX, uint DstY, uint DstZ, const(D3D12_TEXTURE_COPY_LOCATION)* pSrc, const(D3D12_BOX)* pSrcBox);
     void CopyResource(ID3D12Resource pDstResource, ID3D12Resource pSrcResource);
     void _pad17(); void _pad18(); void _pad19(); void _pad20(); void _pad21();
     void SetPipelineState(ID3D12PipelineState pPipelineState);

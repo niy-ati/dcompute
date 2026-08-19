@@ -138,14 +138,79 @@ struct Queue
         return newRes;
     }
 
-    /// Internal helper: Execute a copy between resources synchronously for now
-    void executeCopy(ID3D12Resource dst, ID3D12Resource src)
+    /// Internal helper: Execute a copy between resources.
+    /// CRITICAL: D3D12 requires explicit resource state transitions (barriers)
+    /// before and after CopyResource. Without them, GPU caches are incoherent
+    /// and the copy produces undefined results or validation layer crashes.
+    void executeCopy(ID3D12Resource dst, ID3D12Resource src,
+                     D3D12_RESOURCE_STATES srcStateBefore = D3D12_RESOURCE_STATES.UNORDERED_ACCESS,
+                     D3D12_RESOURCE_STATES dstStateBefore = D3D12_RESOURCE_STATES.COMMON)
     {
         if (raw is null) return;
         
         auto res = getAvailableResource();
 
+        // 1. Transition barriers: move resources into COPY states
+        D3D12_RESOURCE_BARRIER[2] barriers;
+        uint numBarriers = 0;
+
+        // Source: current state → COPY_SOURCE
+        if (srcStateBefore != D3D12_RESOURCE_STATES.COPY_SOURCE)
+        {
+            barriers[numBarriers].Type = D3D12_RESOURCE_BARRIER_TYPE.TRANSITION;
+            barriers[numBarriers].Flags = D3D12_RESOURCE_BARRIER_FLAGS.NONE;
+            barriers[numBarriers].Transition.pResource = cast(void*)src;
+            barriers[numBarriers].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            barriers[numBarriers].Transition.StateBefore = srcStateBefore;
+            barriers[numBarriers].Transition.StateAfter = D3D12_RESOURCE_STATES.COPY_SOURCE;
+            numBarriers++;
+        }
+
+        // Destination: current state → COPY_DEST
+        if (dstStateBefore != D3D12_RESOURCE_STATES.COPY_DEST)
+        {
+            barriers[numBarriers].Type = D3D12_RESOURCE_BARRIER_TYPE.TRANSITION;
+            barriers[numBarriers].Flags = D3D12_RESOURCE_BARRIER_FLAGS.NONE;
+            barriers[numBarriers].Transition.pResource = cast(void*)dst;
+            barriers[numBarriers].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            barriers[numBarriers].Transition.StateBefore = dstStateBefore;
+            barriers[numBarriers].Transition.StateAfter = D3D12_RESOURCE_STATES.COPY_DEST;
+            numBarriers++;
+        }
+
+        if (numBarriers > 0)
+            res.commandList.ResourceBarrier(numBarriers, barriers.ptr);
+
+        // 2. Execute the copy
         res.commandList.CopyResource(dst, src);
+
+        // 3. Transition barriers: restore original states
+        numBarriers = 0;
+        if (srcStateBefore != D3D12_RESOURCE_STATES.COPY_SOURCE)
+        {
+            barriers[numBarriers].Type = D3D12_RESOURCE_BARRIER_TYPE.TRANSITION;
+            barriers[numBarriers].Flags = D3D12_RESOURCE_BARRIER_FLAGS.NONE;
+            barriers[numBarriers].Transition.pResource = cast(void*)src;
+            barriers[numBarriers].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            barriers[numBarriers].Transition.StateBefore = D3D12_RESOURCE_STATES.COPY_SOURCE;
+            barriers[numBarriers].Transition.StateAfter = srcStateBefore;
+            numBarriers++;
+        }
+
+        if (dstStateBefore != D3D12_RESOURCE_STATES.COPY_DEST)
+        {
+            barriers[numBarriers].Type = D3D12_RESOURCE_BARRIER_TYPE.TRANSITION;
+            barriers[numBarriers].Flags = D3D12_RESOURCE_BARRIER_FLAGS.NONE;
+            barriers[numBarriers].Transition.pResource = cast(void*)dst;
+            barriers[numBarriers].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            barriers[numBarriers].Transition.StateBefore = D3D12_RESOURCE_STATES.COPY_DEST;
+            barriers[numBarriers].Transition.StateAfter = dstStateBefore;
+            numBarriers++;
+        }
+
+        if (numBarriers > 0)
+            res.commandList.ResourceBarrier(numBarriers, barriers.ptr);
+
         res.commandList.Close();
 
         auto ppCommandLists = cast(ID3D12CommandList)res.commandList;
@@ -163,6 +228,24 @@ struct Queue
         if (fence.GetCompletedValue() < fenceToWaitFor)
         {
             fence.SetEventOnCompletion(fenceToWaitFor, fenceEvent);
+            WaitForSingleObject(fenceEvent, INFINITE);
+        }
+    }
+
+    /// Drain all pending GPU work on this queue.
+    /// Mirrors OpenCL's clFinish() — blocks the CPU until every
+    /// command list submitted to this queue has completed execution.
+    void finish()
+    {
+        if (raw is null || fence is null) return;
+
+        ulong waitVal = fenceValue;
+        raw.Signal(fence, waitVal);
+        fenceValue++;
+
+        if (fence.GetCompletedValue() < waitVal)
+        {
+            fence.SetEventOnCompletion(waitVal, fenceEvent);
             WaitForSingleObject(fenceEvent, INFINITE);
         }
     }

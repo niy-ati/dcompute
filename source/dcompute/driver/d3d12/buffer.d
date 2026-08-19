@@ -98,8 +98,14 @@ struct Buffer(T)
             }
 
             // 3. Execute GPU copy (uploadResource → gpuResource) via command list
+            // Upload heap is GENERIC_READ, GPU buffer is UNORDERED_ACCESS
             import dcompute.driver.d3d12.runtime : Runtime;
-            Runtime.defaultQueue().executeCopy(gpuResource, uploadResource);
+            import dcompute.driver.d3d12.bindings : D3D12_RESOURCE_STATES;
+            Runtime.defaultQueue().executeCopy(
+                gpuResource, uploadResource,
+                D3D12_RESOURCE_STATES.GENERIC_READ,   // src: upload heap
+                D3D12_RESOURCE_STATES.UNORDERED_ACCESS // dst: gpu buffer
+            );
         }
         else static if (c == Copy.deviceToHost)
         {
@@ -111,8 +117,14 @@ struct Buffer(T)
             if (readbackResource is null) return;
 
             // 2. Execute GPU copy (gpuResource → readbackResource) via command list
+            // GPU buffer is UNORDERED_ACCESS, readback heap starts as COPY_DEST
             import dcompute.driver.d3d12.runtime : Runtime;
-            Runtime.defaultQueue().executeCopy(readbackResource, gpuResource);
+            import dcompute.driver.d3d12.bindings : D3D12_RESOURCE_STATES;
+            Runtime.defaultQueue().executeCopy(
+                readbackResource, gpuResource,
+                D3D12_RESOURCE_STATES.UNORDERED_ACCESS, // src: gpu buffer
+                D3D12_RESOURCE_STATES.COPY_DEST          // dst: readback heap
+            );
             
             // Note: readBack() should be called after this completes to map memory
         }

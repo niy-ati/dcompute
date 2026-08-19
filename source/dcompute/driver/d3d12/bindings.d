@@ -444,7 +444,9 @@ extern(Windows) interface ID3D12CommandQueue : ID3D12Object {
     void ExecuteCommandLists(uint NumCommandLists, ID3D12CommandList* ppCommandLists);
     void _pad10(); void _pad11(); void _pad12();
     HRESULT Signal(ID3D12Fence pFence, ulong Value);
-    void _pad14(); void _pad15(); void _pad16(); void _pad17();
+    HRESULT Wait(ID3D12Fence pFence, ulong Value);
+    HRESULT GetTimestampFrequency(ulong* pFrequency);
+    void _pad16(); void _pad17();
 }
 
 extern(Windows) interface ID3D12CommandList : ID3D12Object {

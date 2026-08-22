@@ -416,6 +416,38 @@ struct Queue
                         );
                         uavSlot++;
                     }
+                    else static if (isImageArg!(typeof(arg)))
+                    {
+                        import dcompute.driver.d3d12.image : Image;
+                        D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc;
+                        
+                        static if (is(typeof(arg) : Image!(1, U), U)) {
+                            uavDesc.ViewDimension = D3D12_UAV_DIMENSION.TEXTURE1D;
+                            uavDesc.Texture1D.MipSlice = 0;
+                        } else static if (is(typeof(arg) : Image!(2, U), U)) {
+                            uavDesc.ViewDimension = D3D12_UAV_DIMENSION.TEXTURE2D;
+                            uavDesc.Texture2D.MipSlice = 0;
+                            uavDesc.Texture2D.PlaneSlice = 0;
+                        } else {
+                            uavDesc.ViewDimension = D3D12_UAV_DIMENSION.TEXTURE3D;
+                            uavDesc.Texture3D.MipSlice = 0;
+                            uavDesc.Texture3D.FirstWSlice = 0;
+                            uavDesc.Texture3D.WSize = cast(uint)-1;
+                        }
+                        
+                        static if (is(typeof(arg.hostMemory[0]) == float))
+                            uavDesc.Format = DXGI_FORMAT.R32_FLOAT;
+                        else static if (is(typeof(arg.hostMemory[0]) == uint))
+                            uavDesc.Format = DXGI_FORMAT.R32_UINT;
+                        
+                        D3D12_CPU_DESCRIPTOR_HANDLE currentHandle = cpuHandle;
+                        currentHandle.ptr += uavSlot * q.descriptorIncrementSize;
+
+                        q.device.CreateUnorderedAccessView(
+                            arg.gpuResource, null, &uavDesc, currentHandle
+                        );
+                        uavSlot++;
+                    }
                 }
 
                 // DCompute ABI Rule 2: Map scalar arguments to a Constant Buffer View (CBV c0) if present

@@ -48,3 +48,25 @@ struct ComplexScalar {
     buf1[i] = scalar1 + scalar2.z;
     buf2[i] = buf0[i] * cast(float)buf1[i];
 }
+
+// Dummy opaque type for DXIL texture resource binding testing
+struct Texture2D(T) {
+    // In a real DXIL module, this would be an opaque handle to a resource.
+    // For ABI validation, we just need it to exist in the signature.
+    uint dummy;
+}
+
+@kernel() void image_test(
+    Texture2D!float inputImage,
+    GlobalPointer!(float) outputBuf,
+    size_t width,
+    size_t height
+)
+{
+    // Real LDC image intrinsics are WIP. We just validate the ABI unpacking logic here.
+    auto idx = GlobalIndex.x;
+    if (idx < width * height)
+    {
+        outputBuf[idx] = 1.0f; // Write something to prove execution didn't crash
+    }
+}

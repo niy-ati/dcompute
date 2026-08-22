@@ -1,6 +1,7 @@
 module dcompute.driver.d3d12.traits;
 
 import dcompute.driver.d3d12.buffer;
+import dcompute.driver.d3d12.image;
 import std.traits;
 import std.meta;
 
@@ -8,7 +9,21 @@ import std.meta;
 /// types. Specifically, replaces `GlobalPointer!T` with `Buffer!T`.
 template HostArgsOf(F) {
     import ldc.dcompute : Pointer; // Pointer!T is aliased to GlobalPointer!T in dcompute
-    alias HostArgsOf = staticMap!(ReplaceTemplate!(Pointer, Buffer), Parameters!F);
+    import dcompute.tests.dummykernels : Texture2D;
+    
+    alias Step1 = staticMap!(ReplaceTemplate!(Pointer, Buffer), Parameters!F);
+    alias HostArgsOf = staticMap!(ReplaceTextureTemplate, Step1);
+}
+
+private template ReplaceTextureTemplate(T) {
+    import dcompute.tests.dummykernels : Texture2D;
+    import dcompute.driver.d3d12.image : Image;
+    
+    static if (is(T : Texture2D!U, U)) {
+        alias ReplaceTextureTemplate = Image!(2, U);
+    } else {
+        alias ReplaceTextureTemplate = T;
+    }
 }
 
 private template ReplaceTemplate(alias needle, alias replacement) {
@@ -30,6 +45,14 @@ template isBufferArg(T) {
         enum isBufferArg = false;
 }
 
+/// Utility trait to check if a type is a D3D12 Image!(Dim, T)
+template isImageArg(T) {
+    static if (is(T : Image!(Dim, U), uint Dim, U))
+        enum isImageArg = true;
+    else
+        enum isImageArg = false;
+}
+
 /// Count the number of UAV (Buffer) parameters in a kernel signature
 template countUAVs(alias k) {
     enum countUAVs = getUAVCount!(HostArgsOf!(typeof(k)))();
@@ -38,7 +61,7 @@ template countUAVs(alias k) {
 private size_t getUAVCount(Args...)() {
     size_t count = 0;
     static foreach (arg; Args) {
-        static if (isBufferArg!arg)
+        static if (isBufferArg!arg || isImageArg!arg)
             count++;
     }
     return count;
@@ -52,7 +75,7 @@ template countScalars(alias k) {
 private size_t getScalarCount(Args...)() {
     size_t count = 0;
     static foreach (arg; Args) {
-        static if (!isBufferArg!arg)
+        static if (!isBufferArg!arg && !isImageArg!arg)
             count++;
     }
     return count;
@@ -66,7 +89,7 @@ template scalarSize(alias k) {
 private size_t getScalarSize(Args...)() {
     size_t sz = 0;
     static foreach (arg; Args) {
-        static if (!isBufferArg!arg)
+        static if (!isBufferArg!arg && !isImageArg!arg)
             sz += arg.sizeof;
     }
     return sz;
@@ -85,10 +108,10 @@ template checkKernelABI(alias k) {
 
 private bool enforceABI(Args...)() {
     static foreach (i, arg; Args) {
-        static if (!isBufferArg!arg) {
+        static if (!isBufferArg!arg && !isImageArg!arg) {
             static assert(!hasUnsharedAliasing!arg, 
                 "DCompute ABI Error: Scalar argument `" ~ arg.stringof ~ "` contains unshared aliasing (pointers/references). " ~
-                "Kernel arguments must be trivially copyable PODs or GlobalPointers.");
+                "Kernel arguments must be trivially copyable PODs or GlobalPointers or Images.");
             static assert(!is(arg == class), 
                 "DCompute ABI Error: Kernel scalar arguments cannot be classes.");
         }

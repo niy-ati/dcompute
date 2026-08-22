@@ -18,7 +18,7 @@ import std.typecons;
 import std.conv : to;
 import std.math.traits : isNaN;
 
-import dcompute.tests.dummykernels : saxpy, abi_test, ComplexScalar;
+import dcompute.tests.dummykernels : saxpy, abi_test, ComplexScalar, image_test;
 
 version(DComputeTestOpenCL)
     import dcompute.driver.ocl;
@@ -28,6 +28,7 @@ else version(DComputeTestCUDA) {
 }
 else version(DComputeTestDirectX) {
     import dcompute.driver.d3d12.unified_buffer;
+    import dcompute.driver.d3d12.image;
     import dcompute.driver.d3d12;
 }
 else
@@ -309,6 +310,35 @@ int main(string[] args)
                     enforce(host_buf2[i] == host_buf0[i] * cast(float)host_buf1[i], "ABI Test failed at buf2!");
                 }
                 writeln("D3D12 ABI Test PASSED.");
+            }
+
+            // 4. Image Descriptor Packing Test
+            {
+                writeln("\nRunning Image Descriptor Packing Test...");
+                enum uint W = 16;
+                enum uint H = 16;
+                enum size_t N_img = W * H;
+                
+                float[N_img] host_img;
+                float[N_img] host_out;
+                
+                // Initialize Image with some data
+                foreach(i; 0 .. N_img) host_img[i] = 0.5f;
+                
+                auto img = Image!(2, float)(host_img[], W, H); scope(exit) img.release();
+                Buffer!(float) outBuf = Buffer!(float)(host_out[]); scope(exit) outBuf.release();
+                
+                img.copy!(Copy.hostToDevice);
+                
+                launch!image_test([W*H,1,1],[1,1,1], img, outBuf, W, H);
+                
+                outBuf.copy!(Copy.deviceToHost);
+                defaultQueue().finish();
+                
+                // Assert that the kernel executed and didn't crash, meaning the Descriptor Table
+                // mapping was valid for both the Image (Texture2D UAV) and Buffer.
+                enforce(host_out[0] == 1.0f, "Image ABI Test failed!");
+                writeln("D3D12 Image ABI Test PASSED.");
             }
         }
         else

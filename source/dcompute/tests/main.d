@@ -18,7 +18,7 @@ import std.typecons;
 import std.conv : to;
 import std.math.traits : isNaN;
 
-import dcompute.tests.dummykernels : saxpy;
+import dcompute.tests.dummykernels : saxpy, abi_test, ComplexScalar;
 
 version(DComputeTestOpenCL)
     import dcompute.driver.ocl;
@@ -279,6 +279,36 @@ int main(string[] args)
                 {
                     writeln("\nDevice does not support Unified Memory — skipping UnifiedBuffer test.");
                 }
+            }
+
+            // 3. ABI Packing Test
+            {
+                writeln("\nRunning ABI Test...");
+                int scalar1 = 5;
+                ComplexScalar scalar2 = ComplexScalar(1.5f, 2.5f, 10);
+                float scalar3 = 42.0f;
+                
+                float[N] host_buf0;
+                int[N] host_buf1;
+                float[N] host_buf2;
+                
+                Buffer!(float) buf0 = Buffer!(float)(host_buf0[]); scope(exit) buf0.release();
+                Buffer!(int) buf1   = Buffer!(int)(host_buf1[]);   scope(exit) buf1.release();
+                Buffer!(float) buf2 = Buffer!(float)(host_buf2[]); scope(exit) buf2.release();
+                
+                launch!abi_test([N,1,1],[1,1,1], scalar1, buf0, scalar2, buf1, scalar3, buf2, N);
+                
+                buf0.copy!(Copy.deviceToHost);
+                buf1.copy!(Copy.deviceToHost);
+                buf2.copy!(Copy.deviceToHost);
+                defaultQueue().finish();
+                
+                foreach(i; 0 .. N) {
+                    enforce(host_buf0[i] == scalar2.x + scalar2.y + scalar3, "ABI Test failed at buf0!");
+                    enforce(host_buf1[i] == scalar1 + scalar2.z, "ABI Test failed at buf1!");
+                    enforce(host_buf2[i] == host_buf0[i] * cast(float)host_buf1[i], "ABI Test failed at buf2!");
+                }
+                writeln("D3D12 ABI Test PASSED.");
             }
         }
         else

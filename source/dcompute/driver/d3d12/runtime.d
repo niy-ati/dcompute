@@ -11,6 +11,7 @@ private __gshared bool   _platformReady = false;
 
 // Thread-local state
 private static Queue _threadQueue;
+private static Queue _threadCopyQueue;
 private static bool  _threadReady = false;
 
 // Init hooks (mirroring CUDA driver)
@@ -44,6 +45,11 @@ Queue* defaultQueue()
     return &_threadQueue;
 }
 
+Queue* defaultCopyQueue()
+{
+    return &_threadCopyQueue;
+}
+
 private void _initPlatform()
 {
     if (_platformReady) return;
@@ -70,7 +76,9 @@ private void _initThread()
 {
     if (_threadReady) return;
 
-    _threadQueue = Queue(false);
+    import dcompute.driver.d3d12.bindings : D3D12_COMMAND_LIST_TYPE;
+    _threadQueue = Queue(D3D12_COMMAND_LIST_TYPE.DIRECT);
+    _threadCopyQueue = Queue(D3D12_COMMAND_LIST_TYPE.COPY);
     _threadReady = true;
 }
 

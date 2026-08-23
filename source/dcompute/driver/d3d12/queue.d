@@ -37,15 +37,18 @@ struct Queue
     uint                      descriptorIncrementSize;
     uint                      currentDescriptorOffset;
     enum                      MAX_DESCRIPTORS = 65536;
+    D3D12_COMMAND_LIST_TYPE   qType;
 
-    this(bool async)
+    this(D3D12_COMMAND_LIST_TYPE type)
     {
         device = Runtime.defaultDevice.raw;
         if (device is null) return;
+        
+        qType = type;
 
         // 1. Create Command Queue
         D3D12_COMMAND_QUEUE_DESC qDesc;
-        qDesc.Type = D3D12_COMMAND_LIST_TYPE.DIRECT; // Or COMPUTE
+        qDesc.Type = type;
         qDesc.Flags = 0;
         
         auto hr = device.CreateCommandQueue(
@@ -62,22 +65,30 @@ struct Queue
         fenceValue = 1;
         fenceEvent = CreateEventW(null, 0 /*FALSE*/, 0 /*FALSE*/, null);
 
-        // 3. Create a single large Shader Visible Descriptor Heap
-        D3D12_DESCRIPTOR_HEAP_DESC heapDesc;
-        heapDesc.NumDescriptors = MAX_DESCRIPTORS;
-        heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE.CBV_SRV_UAV;
-        heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAGS.SHADER_VISIBLE;
-        heapDesc.NodeMask = 0;
+        // 3. Create a single large Shader Visible Descriptor Heap (COMPUTE/DIRECT only)
+        if (type != D3D12_COMMAND_LIST_TYPE.COPY)
+        {
+            D3D12_DESCRIPTOR_HEAP_DESC heapDesc;
+            heapDesc.NumDescriptors = MAX_DESCRIPTORS;
+            heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE.CBV_SRV_UAV;
+            heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAGS.SHADER_VISIBLE;
+            heapDesc.NodeMask = 0;
 
-        hr = device.CreateDescriptorHeap(
-            &heapDesc, &IID_ID3D12DescriptorHeap, cast(void**)&globalDescriptorHeap
-        );
-        checkErrors(hr);
+            hr = device.CreateDescriptorHeap(
+                &heapDesc, &IID_ID3D12DescriptorHeap, cast(void**)&globalDescriptorHeap
+            );
+            checkErrors(hr);
 
-        descriptorIncrementSize = device.GetDescriptorHandleIncrementSize(
-            D3D12_DESCRIPTOR_HEAP_TYPE.CBV_SRV_UAV
-        );
-        currentDescriptorOffset = 0;
+            descriptorIncrementSize = device.GetDescriptorHandleIncrementSize(
+                D3D12_DESCRIPTOR_HEAP_TYPE.CBV_SRV_UAV
+            );
+            currentDescriptorOffset = 0;
+        }
+    }
+    
+    // For backwards compatibility with old tests
+    this(bool async) {
+        this(D3D12_COMMAND_LIST_TYPE.DIRECT);
     }
 
     @property bool async()
@@ -124,11 +135,11 @@ struct Queue
         // None available, create a new one (expands the pool)
         InFlightResource newRes;
         auto hr = device.CreateCommandAllocator(
-            D3D12_COMMAND_LIST_TYPE.DIRECT, &IID_ID3D12CommandAllocator, cast(void**)&newRes.allocator
+            qType, &IID_ID3D12CommandAllocator, cast(void**)&newRes.allocator
         );
         checkErrors(hr);
         hr = device.CreateCommandList(
-            0, D3D12_COMMAND_LIST_TYPE.DIRECT, newRes.allocator, null, &IID_ID3D12GraphicsCommandList, cast(void**)&newRes.commandList
+            0, qType, newRes.allocator, null, &IID_ID3D12GraphicsCommandList, cast(void**)&newRes.commandList
         );
         checkErrors(hr);
 
@@ -142,11 +153,13 @@ struct Queue
     /// CRITICAL: D3D12 requires explicit resource state transitions (barriers)
     /// before and after CopyResource. Without them, GPU caches are incoherent
     /// and the copy produces undefined results or validation layer crashes.
-    void executeCopy(ID3D12Resource dst, ID3D12Resource src,
+    import dcompute.driver.d3d12.event : Event;
+    
+    Event executeCopy(ID3D12Resource dst, ID3D12Resource src,
                      D3D12_RESOURCE_STATES srcStateBefore = D3D12_RESOURCE_STATES.UNORDERED_ACCESS,
                      D3D12_RESOURCE_STATES dstStateBefore = D3D12_RESOURCE_STATES.COMMON)
     {
-        if (raw is null) return;
+        if (raw is null) return Event(null, 0);
         
         auto res = getAvailableResource();
 
@@ -224,20 +237,15 @@ struct Queue
         // Update the resource in the pool so it knows when it's free
         res.targetFence = fenceToWaitFor;
 
-        // Synchronous wait for copies
-        if (fence.GetCompletedValue() < fenceToWaitFor)
-        {
-            fence.SetEventOnCompletion(fenceToWaitFor, fenceEvent);
-            WaitForSingleObject(fenceEvent, INFINITE);
-        }
+        return Event(&this, fenceToWaitFor);
     }
 
     /// Internal helper: Execute a texture copy between resources.
-    void executeTextureCopy(const(D3D12_TEXTURE_COPY_LOCATION)* dst, const(D3D12_TEXTURE_COPY_LOCATION)* src,
+    Event executeTextureCopy(const(D3D12_TEXTURE_COPY_LOCATION)* dst, const(D3D12_TEXTURE_COPY_LOCATION)* src,
                             D3D12_RESOURCE_STATES srcStateBefore = D3D12_RESOURCE_STATES.UNORDERED_ACCESS,
                             D3D12_RESOURCE_STATES dstStateBefore = D3D12_RESOURCE_STATES.COMMON)
     {
-        if (raw is null) return;
+        if (raw is null) return Event(null, 0);
         
         auto res = getAvailableResource();
 
@@ -311,11 +319,7 @@ struct Queue
         
         res.targetFence = fenceToWaitFor;
 
-        if (fence.GetCompletedValue() < fenceToWaitFor)
-        {
-            fence.SetEventOnCompletion(fenceToWaitFor, fenceEvent);
-            WaitForSingleObject(fenceEvent, INFINITE);
-        }
+        return Event(&this, fenceToWaitFor);
     }
 
     /// Drain all pending GPU work on this queue.
@@ -452,6 +456,11 @@ struct Queue
 
                 // DCompute ABI Rule 2: Map scalar arguments to a Constant Buffer View (CBV c0) if present
                 // Vulkan equivalent: vkUpdateDescriptorSets for descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+                
+                // 3. Acquire command allocator BEFORE building CBV, so we can schedule
+                //    the CB resource for deferred release on this allocator's fence.
+                auto res = q.getAvailableResource();
+                
                 ID3D12Resource cbResource;
                 static if (numScalars > 0)
                 {
@@ -492,7 +501,10 @@ struct Queue
                             size_t byteOffset = 0;
                             static foreach (i, arg; args)
                             {
-                                static if (!isBufferArg!(typeof(arg)))
+                                // BUG FIX: Must exclude BOTH Buffer AND Image args from CBV packing.
+                                // Previously only excluded Buffer, causing Image structs to be
+                                // memcpy'd into the constant buffer — corrupting the CBV payload.
+                                static if (!isBufferArg!(typeof(arg)) && !isImageArg!(typeof(arg)))
                                 {
                                     import core.stdc.string : memcpy;
                                     memcpy(mapped + byteOffset, &arg, arg.sizeof);
@@ -514,7 +526,8 @@ struct Queue
                             &cbvDesc, cbvHandle
                         );
                         
-                        // Schedule it for release once this dispatch's fence is passed
+                        // Schedule CB resource for release once this dispatch's fence passes.
+                        // Now safe because `res` was acquired above.
                         foreach(ref poolRes; q.inFlightPool) {
                             if (poolRes.allocator == res.allocator) {
                                 poolRes.pendingReleases ~= cbResource;
@@ -524,10 +537,7 @@ struct Queue
                     }
                 }
 
-                // 4. Record command list using an available allocator pool resource
-                auto res = q.getAvailableResource();
-
-                // PSO might be different, so we set it
+                // 4. Record command list
                 res.commandList.SetPipelineState(kernel.pipelineState);
                 res.commandList.SetComputeRootSignature(kernel.rootSignature);
                 
@@ -550,7 +560,6 @@ struct Queue
                 q.fenceValue++;
 
                 // Update the resource pool with the fence value so we know when it's free
-                // Note: since we copied by value, we must update the actual array element
                 foreach (ref poolRes; q.inFlightPool)
                 {
                     if (poolRes.allocator == res.allocator)

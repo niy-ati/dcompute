@@ -97,15 +97,23 @@ struct Buffer(T)
                 uploadResource.Unmap(0, &writeRange);
             }
 
-            // 3. Execute GPU copy (uploadResource → gpuResource) via command list
+            // 3. Execute GPU copy (uploadResource → gpuResource) via copy command list
             // Upload heap is GENERIC_READ, GPU buffer is UNORDERED_ACCESS
             import dcompute.driver.d3d12.runtime : Runtime;
             import dcompute.driver.d3d12.bindings : D3D12_RESOURCE_STATES;
-            Runtime.defaultQueue().executeCopy(
+            import dcompute.driver.d3d12.event : Event;
+            
+            auto copyQ = Runtime.defaultCopyQueue();
+            auto compQ = Runtime.defaultQueue();
+            
+            Event copyEvent = copyQ.executeCopy(
                 gpuResource, uploadResource,
                 D3D12_RESOURCE_STATES.GENERIC_READ,   // src: upload heap
                 D3D12_RESOURCE_STATES.UNORDERED_ACCESS // dst: gpu buffer
             );
+            
+            // Instruct compute queue to wait for the copy queue on the GPU
+            compQ.wait(copyEvent);
         }
         else static if (c == Copy.deviceToHost)
         {
@@ -116,15 +124,27 @@ struct Buffer(T)
             }
             if (readbackResource is null) return;
 
-            // 2. Execute GPU copy (gpuResource → readbackResource) via command list
+            // 2. Execute GPU copy (gpuResource → readbackResource) via copy command list
             // GPU buffer is UNORDERED_ACCESS, readback heap starts as COPY_DEST
             import dcompute.driver.d3d12.runtime : Runtime;
             import dcompute.driver.d3d12.bindings : D3D12_RESOURCE_STATES;
-            Runtime.defaultQueue().executeCopy(
+            import dcompute.driver.d3d12.event : Event;
+            
+            auto copyQ = Runtime.defaultCopyQueue();
+            auto compQ = Runtime.defaultQueue();
+            
+            // Note: In a true async model we should make the copy queue wait on the compute
+            // queue if a kernel is writing to it. Since Queue.wait(Event) exists, this is possible,
+            // but for now we issue the copy and return the event.
+            
+            Event copyEvent = copyQ.executeCopy(
                 readbackResource, gpuResource,
                 D3D12_RESOURCE_STATES.UNORDERED_ACCESS, // src: gpu buffer
                 D3D12_RESOURCE_STATES.COPY_DEST          // dst: readback heap
             );
+            
+            // Sync host (this blocks the CPU until the copy is done so we can safely read)
+            copyEvent.wait();
             
             // Note: readBack() should be called after this completes to map memory
         }

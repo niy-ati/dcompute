@@ -47,6 +47,35 @@ struct Device
         return i.dedicatedVideoMemory;
     }
 
+    /// True if the device supports Unified Shared Memory (USM).
+    /// In D3D12, this is true if the architecture is Cache Coherent UMA,
+    /// allowing CPU to map memory with WRITE_BACK properties (Custom Heaps).
+    @property bool supportsUnifiedMemory()
+    {
+        if (raw is null) return false;
+        
+        D3D12_FEATURE_DATA_ARCHITECTURE1 arch = {0};
+        // D3D12_FEATURE_ARCHITECTURE1 requires NodeIndex to be set
+        arch.NodeIndex = 0;
+        
+        auto hr = raw.CheckFeatureSupport(D3D12_FEATURE.ARCHITECTURE1, &arch, arch.sizeof);
+        if (SUCCEEDED(hr))
+        {
+            return arch.CacheCoherentUMA != 0;
+        }
+        
+        // Fallback to older D3D12_FEATURE_ARCHITECTURE if 1 is not supported
+        D3D12_FEATURE_DATA_ARCHITECTURE arch0 = {0};
+        arch0.NodeIndex = 0;
+        hr = raw.CheckFeatureSupport(D3D12_FEATURE.ARCHITECTURE, &arch0, arch0.sizeof);
+        if (SUCCEEDED(hr))
+        {
+            return arch0.CacheCoherentUMA != 0;
+        }
+        
+        return false;
+    }
+
     /// Create a D3D12 device on a specific adapter.
     static Device create(IDXGIAdapter1 adap, D3D_FEATURE_LEVEL level = D3D_FEATURE_LEVEL._11_0)
     {

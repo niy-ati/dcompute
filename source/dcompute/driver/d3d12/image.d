@@ -144,12 +144,18 @@ struct Image(uint Dim, T)
             srcLoc.Type = D3D12_TEXTURE_COPY_TYPE.PLACED_FOOTPRINT;
             srcLoc.u.PlacedFootprint = footprint;
 
-            import dcompute.driver.d3d12.runtime : Runtime;
-            Runtime.defaultQueue().executeTextureCopy(
+            import dcompute.driver.d3d12.event : Event;
+            
+            auto copyQ = Runtime.defaultCopyQueue();
+            auto compQ = Runtime.defaultQueue();
+            
+            Event copyEvent = copyQ.executeTextureCopy(
                 &dstLoc, &srcLoc,
                 D3D12_RESOURCE_STATES.GENERIC_READ,
                 D3D12_RESOURCE_STATES.UNORDERED_ACCESS
             );
+            
+            compQ.wait(copyEvent);
         }
         else static if (c == Copy.deviceToHost)
         {
@@ -167,12 +173,17 @@ struct Image(uint Dim, T)
             srcLoc.Type = D3D12_TEXTURE_COPY_TYPE.SUBRESOURCE_INDEX;
             srcLoc.u.SubresourceIndex = 0;
 
-            import dcompute.driver.d3d12.runtime : Runtime;
-            Runtime.defaultQueue().executeTextureCopy(
+            import dcompute.driver.d3d12.event : Event;
+            
+            auto copyQ = Runtime.defaultCopyQueue();
+            
+            Event copyEvent = copyQ.executeTextureCopy(
                 &dstLoc, &srcLoc,
                 D3D12_RESOURCE_STATES.UNORDERED_ACCESS,
                 D3D12_RESOURCE_STATES.COPY_DEST
             );
+            
+            copyEvent.wait();
         }
     }
 

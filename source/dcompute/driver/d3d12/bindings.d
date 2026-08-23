@@ -212,6 +212,19 @@ enum D3D12_BUFFER_UAV_FLAGS : int {
     RAW  = 1,
 }
 
+enum D3D12_FEATURE : int {
+    OPTIONS               = 0,
+    ARCHITECTURE          = 1,
+    FEATURE_LEVELS        = 2,
+    FORMAT_SUPPORT        = 3,
+    MULTISAMPLE_QUALITY_LEVELS = 4,
+    FORMAT_INFO           = 5,
+    GPU_VIRTUAL_ADDRESS_SUPPORT = 6,
+    SHADER_MODELS         = 7,
+    D3D12_OPTIONS1        = 8,
+    ARCHITECTURE1         = 16,
+}
+
 // ── D3D12 structs ──────────────────────────────────────────────────────────
 
 struct DXGI_ADAPTER_DESC1 {
@@ -394,6 +407,21 @@ struct D3D12_BOX {
     uint back;
 }
 
+struct D3D12_FEATURE_DATA_ARCHITECTURE {
+    uint NodeIndex;
+    BOOL TileBasedRenderer;
+    BOOL UMA;
+    BOOL CacheCoherentUMA;
+}
+
+struct D3D12_FEATURE_DATA_ARCHITECTURE1 {
+    uint NodeIndex;
+    BOOL TileBasedRenderer;
+    BOOL UMA;
+    BOOL CacheCoherentUMA;
+    BOOL IsolatedMMU;
+}
+
 // ── GUIDs ──────────────────────────────────────────────────────────────────
 
 immutable GUID IID_IDXGIFactory4 = {
@@ -465,7 +493,7 @@ extern(Windows) interface ID3D12Device : ID3D12Object {
     void _pad10();
     HRESULT CreateComputePipelineState(const(D3D12_COMPUTE_PIPELINE_STATE_DESC)* pDesc, const(GUID)* riid, void** ppPipelineState);
     HRESULT CreateCommandList(uint nodeMask, D3D12_COMMAND_LIST_TYPE type, ID3D12CommandAllocator pCommandAllocator, ID3D12PipelineState pInitialState, const(GUID)* riid, void** ppCommandList);
-    void _pad13();
+    HRESULT CheckFeatureSupport(D3D12_FEATURE Feature, void* pFeatureSupportData, uint FeatureSupportDataSize);
     HRESULT CreateDescriptorHeap(const(D3D12_DESCRIPTOR_HEAP_DESC)* pDescriptorHeapDesc, const(GUID)* riid, void** ppvHeap);
     uint GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE DescriptorHeapType);
     HRESULT CreateRootSignature(uint nodeMask, const(void)* pBlobWithRootSignature, size_t blobLengthInBytes, const(GUID)* riid, void** ppvRootSignature);

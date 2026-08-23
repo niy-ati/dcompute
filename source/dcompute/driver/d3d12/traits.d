@@ -9,21 +9,7 @@ import std.meta;
 /// types. Specifically, replaces `GlobalPointer!T` with `Buffer!T`.
 template HostArgsOf(F) {
     import ldc.dcompute : Pointer; // Pointer!T is aliased to GlobalPointer!T in dcompute
-    import dcompute.tests.dummykernels : Texture2D;
-    
-    alias Step1 = staticMap!(ReplaceTemplate!(Pointer, Buffer), Parameters!F);
-    alias HostArgsOf = staticMap!(ReplaceTextureTemplate, Step1);
-}
-
-private template ReplaceTextureTemplate(T) {
-    import dcompute.tests.dummykernels : Texture2D;
-    import dcompute.driver.d3d12.image : Image;
-    
-    static if (is(T : Texture2D!U, U)) {
-        alias ReplaceTextureTemplate = Image!(2, U);
-    } else {
-        alias ReplaceTextureTemplate = T;
-    }
+    alias HostArgsOf = staticMap!(ReplaceTemplate!(Pointer, Buffer), Parameters!F);
 }
 
 private template ReplaceTemplate(alias needle, alias replacement) {

@@ -215,6 +215,7 @@ int main(string[] args)
                 // D3D12 uses embedded DXIL blob
                 Program.globalProgram = Program.fromModule!("dcompute.tests.dummykernels")();
                 auto q = Queue(false);
+                scope(exit) q.release();
 
                 Buffer!(float) b_res, b_x, b_y;
                 b_res = Buffer!(float)(res[]); scope(exit) b_res.release();

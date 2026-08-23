@@ -307,6 +307,53 @@ int main(string[] args)
                 }
                 writeln("D3D12 ABI Test PASSED.");
             }
+
+            // 4. Auto Index Test
+            {
+                writeln("\nRunning Auto Index Test...");
+                float[N] host_a, host_b, host_c;
+                foreach(i; 0 .. N) { host_b[i] = i; host_c[i] = i * 2.0f; }
+                
+                Buffer!(float) buf_a = Buffer!(float)(host_a[]); scope(exit) buf_a.release();
+                Buffer!(float) buf_b = Buffer!(float)(host_b[]); scope(exit) buf_b.release();
+                Buffer!(float) buf_c = Buffer!(float)(host_c[]); scope(exit) buf_c.release();
+                
+                buf_b.copy!(Copy.hostToDevice);
+                buf_c.copy!(Copy.hostToDevice);
+                
+                import dcompute.tests.dummykernels : auto_index_test;
+                launch!auto_index_test([N,1,1],[1,1,1], buf_a, buf_b, buf_c);
+                
+                buf_a.copy!(Copy.deviceToHost);
+                defaultQueue().finish();
+                
+                foreach(i; 0 .. N) {
+                    enforce(host_a[i] == host_b[i] + host_c[i], "Auto Index Test failed!");
+                }
+                writeln("D3D12 Auto Index Test PASSED.");
+            }
+
+            // 5. Image ABI Test
+            {
+                writeln("\nRunning Image ABI Test...");
+                import dcompute.tests.dummykernels : image_test, Texture2D;
+                
+                float[N] host_out;
+                Buffer!(float) buf_out = Buffer!(float)(host_out[]); scope(exit) buf_out.release();
+                
+                Texture2D!float dummyTex;
+                dummyTex.dummy = 0;
+                
+                launch!image_test([N,1,1],[1,1,1], dummyTex, buf_out, N, 1);
+                
+                buf_out.copy!(Copy.deviceToHost);
+                defaultQueue().finish();
+                
+                foreach(i; 0 .. N) {
+                    enforce(host_out[i] == 1.0f, "Image ABI Test failed!");
+                }
+                writeln("D3D12 Image ABI Test PASSED.");
+            }
         }
         else
         {

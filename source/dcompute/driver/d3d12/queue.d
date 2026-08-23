@@ -155,74 +155,15 @@ struct Queue
     /// and the copy produces undefined results or validation layer crashes.
     import dcompute.driver.d3d12.event : Event;
     
-    Event executeCopy(ID3D12Resource dst, ID3D12Resource src,
-                     D3D12_RESOURCE_STATES srcStateBefore = D3D12_RESOURCE_STATES.UNORDERED_ACCESS,
-                     D3D12_RESOURCE_STATES dstStateBefore = D3D12_RESOURCE_STATES.COMMON)
+    Event executeCopy(ID3D12Resource dst, ID3D12Resource src)
     {
         if (raw is null) return Event(null, 0);
         
         auto res = getAvailableResource();
 
-        // 1. Transition barriers: move resources into COPY states
-        D3D12_RESOURCE_BARRIER[2] barriers;
-        uint numBarriers = 0;
-
-        // Source: current state → COPY_SOURCE
-        if (srcStateBefore != D3D12_RESOURCE_STATES.COPY_SOURCE)
-        {
-            barriers[numBarriers].Type = D3D12_RESOURCE_BARRIER_TYPE.TRANSITION;
-            barriers[numBarriers].Flags = D3D12_RESOURCE_BARRIER_FLAGS.NONE;
-            barriers[numBarriers].Transition.pResource = cast(void*)src;
-            barriers[numBarriers].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-            barriers[numBarriers].Transition.StateBefore = srcStateBefore;
-            barriers[numBarriers].Transition.StateAfter = D3D12_RESOURCE_STATES.COPY_SOURCE;
-            numBarriers++;
-        }
-
-        // Destination: current state → COPY_DEST
-        if (dstStateBefore != D3D12_RESOURCE_STATES.COPY_DEST)
-        {
-            barriers[numBarriers].Type = D3D12_RESOURCE_BARRIER_TYPE.TRANSITION;
-            barriers[numBarriers].Flags = D3D12_RESOURCE_BARRIER_FLAGS.NONE;
-            barriers[numBarriers].Transition.pResource = cast(void*)dst;
-            barriers[numBarriers].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-            barriers[numBarriers].Transition.StateBefore = dstStateBefore;
-            barriers[numBarriers].Transition.StateAfter = D3D12_RESOURCE_STATES.COPY_DEST;
-            numBarriers++;
-        }
-
-        if (numBarriers > 0)
-            res.commandList.ResourceBarrier(numBarriers, barriers.ptr);
-
         // 2. Execute the copy
+        // Copy queues rely on implicit state promotion (from COMMON to COPY_SOURCE/COPY_DEST)
         res.commandList.CopyResource(dst, src);
-
-        // 3. Transition barriers: restore original states
-        numBarriers = 0;
-        if (srcStateBefore != D3D12_RESOURCE_STATES.COPY_SOURCE)
-        {
-            barriers[numBarriers].Type = D3D12_RESOURCE_BARRIER_TYPE.TRANSITION;
-            barriers[numBarriers].Flags = D3D12_RESOURCE_BARRIER_FLAGS.NONE;
-            barriers[numBarriers].Transition.pResource = cast(void*)src;
-            barriers[numBarriers].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-            barriers[numBarriers].Transition.StateBefore = D3D12_RESOURCE_STATES.COPY_SOURCE;
-            barriers[numBarriers].Transition.StateAfter = srcStateBefore;
-            numBarriers++;
-        }
-
-        if (dstStateBefore != D3D12_RESOURCE_STATES.COPY_DEST)
-        {
-            barriers[numBarriers].Type = D3D12_RESOURCE_BARRIER_TYPE.TRANSITION;
-            barriers[numBarriers].Flags = D3D12_RESOURCE_BARRIER_FLAGS.NONE;
-            barriers[numBarriers].Transition.pResource = cast(void*)dst;
-            barriers[numBarriers].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-            barriers[numBarriers].Transition.StateBefore = D3D12_RESOURCE_STATES.COPY_DEST;
-            barriers[numBarriers].Transition.StateAfter = dstStateBefore;
-            numBarriers++;
-        }
-
-        if (numBarriers > 0)
-            res.commandList.ResourceBarrier(numBarriers, barriers.ptr);
 
         res.commandList.Close();
 
@@ -241,78 +182,52 @@ struct Queue
     }
 
     /// Internal helper: Execute a texture copy between resources.
-    Event executeTextureCopy(const(D3D12_TEXTURE_COPY_LOCATION)* dst, const(D3D12_TEXTURE_COPY_LOCATION)* src,
-                            D3D12_RESOURCE_STATES srcStateBefore = D3D12_RESOURCE_STATES.UNORDERED_ACCESS,
-                            D3D12_RESOURCE_STATES dstStateBefore = D3D12_RESOURCE_STATES.COMMON)
+    Event executeTextureCopy(const(D3D12_TEXTURE_COPY_LOCATION)* dst, const(D3D12_TEXTURE_COPY_LOCATION)* src)
     {
         if (raw is null) return Event(null, 0);
         
         auto res = getAvailableResource();
 
-        // 1. Transition barriers
-        D3D12_RESOURCE_BARRIER[2] barriers;
-        uint numBarriers = 0;
-
-        if (srcStateBefore != D3D12_RESOURCE_STATES.COPY_SOURCE)
-        {
-            barriers[numBarriers].Type = D3D12_RESOURCE_BARRIER_TYPE.TRANSITION;
-            barriers[numBarriers].Flags = D3D12_RESOURCE_BARRIER_FLAGS.NONE;
-            barriers[numBarriers].Transition.pResource = cast(void*)src.pResource;
-            barriers[numBarriers].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-            barriers[numBarriers].Transition.StateBefore = srcStateBefore;
-            barriers[numBarriers].Transition.StateAfter = D3D12_RESOURCE_STATES.COPY_SOURCE;
-            numBarriers++;
-        }
-
-        if (dstStateBefore != D3D12_RESOURCE_STATES.COPY_DEST)
-        {
-            barriers[numBarriers].Type = D3D12_RESOURCE_BARRIER_TYPE.TRANSITION;
-            barriers[numBarriers].Flags = D3D12_RESOURCE_BARRIER_FLAGS.NONE;
-            barriers[numBarriers].Transition.pResource = cast(void*)dst.pResource;
-            barriers[numBarriers].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-            barriers[numBarriers].Transition.StateBefore = dstStateBefore;
-            barriers[numBarriers].Transition.StateAfter = D3D12_RESOURCE_STATES.COPY_DEST;
-            numBarriers++;
-        }
-
-        if (numBarriers > 0)
-            res.commandList.ResourceBarrier(numBarriers, barriers.ptr);
-
         // 2. Execute the copy
         res.commandList.CopyTextureRegion(dst, 0, 0, 0, src, null);
-
-        // 3. Restore states
-        numBarriers = 0;
-        if (srcStateBefore != D3D12_RESOURCE_STATES.COPY_SOURCE)
-        {
-            barriers[numBarriers].Type = D3D12_RESOURCE_BARRIER_TYPE.TRANSITION;
-            barriers[numBarriers].Flags = D3D12_RESOURCE_BARRIER_FLAGS.NONE;
-            barriers[numBarriers].Transition.pResource = cast(void*)src.pResource;
-            barriers[numBarriers].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-            barriers[numBarriers].Transition.StateBefore = D3D12_RESOURCE_STATES.COPY_SOURCE;
-            barriers[numBarriers].Transition.StateAfter = srcStateBefore;
-            numBarriers++;
-        }
-
-        if (dstStateBefore != D3D12_RESOURCE_STATES.COPY_DEST)
-        {
-            barriers[numBarriers].Type = D3D12_RESOURCE_BARRIER_TYPE.TRANSITION;
-            barriers[numBarriers].Flags = D3D12_RESOURCE_BARRIER_FLAGS.NONE;
-            barriers[numBarriers].Transition.pResource = cast(void*)dst.pResource;
-            barriers[numBarriers].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-            barriers[numBarriers].Transition.StateBefore = D3D12_RESOURCE_STATES.COPY_DEST;
-            barriers[numBarriers].Transition.StateAfter = dstStateBefore;
-            numBarriers++;
-        }
-
-        if (numBarriers > 0)
-            res.commandList.ResourceBarrier(numBarriers, barriers.ptr);
 
         res.commandList.Close();
 
         auto ppCommandLists = cast(ID3D12CommandList)res.commandList;
         raw.ExecuteCommandLists(1, &ppCommandLists);
         
+        ulong fenceToWaitFor = fenceValue;
+        raw.Signal(fence, fenceToWaitFor);
+        fenceValue++;
+        
+        res.targetFence = fenceToWaitFor;
+
+        return Event(&this, fenceToWaitFor);
+    }
+
+    /// Internal helper: Issue explicit resource barriers on this queue.
+    /// Used by Compute queues to transition resources to COMMON before handing them off
+    /// to Copy queues, and back to UNORDERED_ACCESS when receiving them.
+    Event transitionResource(ID3D12Resource resource, D3D12_RESOURCE_STATES stateBefore, D3D12_RESOURCE_STATES stateAfter)
+    {
+        if (raw is null || resource is null || stateBefore == stateAfter) return Event(null, 0);
+
+        auto res = getAvailableResource();
+
+        D3D12_RESOURCE_BARRIER barrier;
+        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE.TRANSITION;
+        barrier.Flags = D3D12_RESOURCE_BARRIER_FLAGS.NONE;
+        barrier.Transition.pResource = cast(void*)resource;
+        barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        barrier.Transition.StateBefore = stateBefore;
+        barrier.Transition.StateAfter = stateAfter;
+
+        res.commandList.ResourceBarrier(1, &barrier);
+        res.commandList.Close();
+
+        auto ppCommandLists = cast(ID3D12CommandList)res.commandList;
+        raw.ExecuteCommandLists(1, &ppCommandLists);
+
         ulong fenceToWaitFor = fenceValue;
         raw.Signal(fence, fenceToWaitFor);
         fenceValue++;

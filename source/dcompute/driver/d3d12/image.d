@@ -149,13 +149,21 @@ struct Image(uint Dim, T)
             auto copyQ = Runtime.defaultCopyQueue();
             auto compQ = Runtime.defaultQueue();
             
-            Event copyEvent = copyQ.executeTextureCopy(
-                &dstLoc, &srcLoc,
-                D3D12_RESOURCE_STATES.GENERIC_READ,
-                D3D12_RESOURCE_STATES.UNORDERED_ACCESS
+            Event preCopyEvent = compQ.transitionResource(
+                gpuResource,
+                D3D12_RESOURCE_STATES.UNORDERED_ACCESS,
+                D3D12_RESOURCE_STATES.COMMON
             );
             
+            copyQ.wait(preCopyEvent);
+            Event copyEvent = copyQ.executeTextureCopy(&dstLoc, &srcLoc);
+            
             compQ.wait(copyEvent);
+            Event postCopyEvent = compQ.transitionResource(
+                gpuResource,
+                D3D12_RESOURCE_STATES.COMMON,
+                D3D12_RESOURCE_STATES.UNORDERED_ACCESS
+            );
         }
         else static if (c == Copy.deviceToHost)
         {
@@ -176,11 +184,22 @@ struct Image(uint Dim, T)
             import dcompute.driver.d3d12.event : Event;
             
             auto copyQ = Runtime.defaultCopyQueue();
+            auto compQ = Runtime.defaultQueue();
             
-            Event copyEvent = copyQ.executeTextureCopy(
-                &dstLoc, &srcLoc,
+            Event preCopyEvent = compQ.transitionResource(
+                gpuResource,
                 D3D12_RESOURCE_STATES.UNORDERED_ACCESS,
-                D3D12_RESOURCE_STATES.COPY_DEST
+                D3D12_RESOURCE_STATES.COMMON
+            );
+            
+            copyQ.wait(preCopyEvent);
+            Event copyEvent = copyQ.executeTextureCopy(&dstLoc, &srcLoc);
+            
+            compQ.wait(copyEvent);
+            Event postCopyEvent = compQ.transitionResource(
+                gpuResource,
+                D3D12_RESOURCE_STATES.COMMON,
+                D3D12_RESOURCE_STATES.UNORDERED_ACCESS
             );
             
             copyEvent.wait();

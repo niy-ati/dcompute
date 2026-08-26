@@ -10,6 +10,7 @@ public import dcompute.driver.d3d12.error;
 public import dcompute.driver.d3d12.event;
 public import dcompute.driver.d3d12.image;
 public import dcompute.driver.d3d12.kernel;
+public import dcompute.driver.d3d12.memory;
 public import dcompute.driver.d3d12.platform;
 public import dcompute.driver.d3d12.program;
 public import dcompute.driver.d3d12.queue;

@@ -206,11 +206,29 @@ int main(string[] args)
     {
         static if (__VERSION__ >= 2113)
         {
-            // 1. Manual test
+            // 0. Hardware Capabilities Discovery
             {
+                writeln("=== D3D12 Hardware Capabilities ===");
                 Platform.initialise();
                 auto devs = Platform.getDevices();
                 auto dev = devs.length > 0 ? devs[0] : Platform.getWarpDevice();
+
+                auto devInfo = dev.info;
+                writefln("  Adapter:            %s", devInfo.description);
+                writefln("  Vendor ID:          0x%04X", devInfo.vendorId);
+                writefln("  VRAM:               %d MB", devInfo.dedicatedVideoMemory / (1024*1024));
+
+                auto sm = dev.highestShaderModel;
+                writefln("  Highest SM:         %d.%d", sm >> 4, sm & 0xF);
+                writefln("  Binding Tier:       %d", dev.resourceBindingTier);
+                writefln("  Bindless (SM 6.6):  %s", dev.supportsBindless ? "YES" : "NO");
+                writefln("  Wave Intrinsics:    %s", dev.supportsWaveIntrinsics ? "YES" : "NO");
+                writefln("  Unified Memory:     %s", dev.supportsUnifiedMemory ? "YES" : "NO");
+                writeln("===================================\n");
+            }
+
+            // 1. Manual test
+            {
 
                 // D3D12 uses embedded DXIL blob
                 Program.globalProgram = Program.fromModule!("dcompute.tests.dummykernels")();

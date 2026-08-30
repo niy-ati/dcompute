@@ -220,9 +220,31 @@ enum D3D12_FEATURE : int {
     MULTISAMPLE_QUALITY_LEVELS = 4,
     FORMAT_INFO           = 5,
     GPU_VIRTUAL_ADDRESS_SUPPORT = 6,
-    SHADER_MODELS         = 7,
+    SHADER_MODEL          = 7,
     D3D12_OPTIONS1        = 8,
     ARCHITECTURE1         = 16,
+}
+
+/// Shader model versions (hex encoding: major << 4 | minor).
+/// SM 6.6 is the minimum for Dynamic Resources (Bindless).
+enum D3D_SHADER_MODEL : int {
+    _5_1 = 0x51,
+    _6_0 = 0x60,
+    _6_1 = 0x61,
+    _6_2 = 0x62,
+    _6_3 = 0x63,
+    _6_4 = 0x64,
+    _6_5 = 0x65,
+    _6_6 = 0x66,  // Dynamic Resources (Bindless)
+    _6_7 = 0x67,
+    _6_8 = 0x68,
+}
+
+/// Resource Binding Tier. Tier 3 = full bindless heap access.
+enum D3D12_RESOURCE_BINDING_TIER : int {
+    TIER_1 = 1,
+    TIER_2 = 2,
+    TIER_3 = 3,
 }
 
 // ── D3D12 structs ──────────────────────────────────────────────────────────
@@ -420,6 +442,34 @@ struct D3D12_FEATURE_DATA_ARCHITECTURE1 {
     BOOL UMA;
     BOOL CacheCoherentUMA;
     BOOL IsolatedMMU;
+}
+
+/// Used with CheckFeatureSupport(D3D12_FEATURE.SHADER_MODEL).
+/// Set HighestShaderModel to the max you want to query; the driver
+/// will clamp it down to whatever the hardware actually supports.
+struct D3D12_FEATURE_DATA_SHADER_MODEL {
+    D3D_SHADER_MODEL HighestShaderModel;
+}
+
+/// Used with CheckFeatureSupport(D3D12_FEATURE.OPTIONS).
+/// We only care about ResourceBindingTier (offset 16 = 5th DWORD),
+/// but the struct layout must be exact for the driver to write into it.
+struct D3D12_FEATURE_DATA_D3D12_OPTIONS {
+    BOOL DoublePrecisionFloatShaderOps;
+    BOOL OutputMergerLogicOp;
+    int  MinPrecisionSupport;            // D3D12_SHADER_MIN_PRECISION_SUPPORT
+    int  TiledResourcesTier;             // D3D12_TILED_RESOURCES_TIER
+    D3D12_RESOURCE_BINDING_TIER ResourceBindingTier;
+    BOOL PSSpecifiedStencilRefSupported;
+    BOOL TypedUAVLoadAdditionalFormats;
+    BOOL ROVsSupported;
+    int  ConservativeRasterizationTier;  // D3D12_CONSERVATIVE_RASTERIZATION_TIER
+    uint MaxGPUVirtualAddressBitsPerResource;
+    BOOL StandardSwizzle64KBSupported;
+    int  CrossNodeSharingTier;           // D3D12_CROSS_NODE_SHARING_TIER
+    BOOL CrossAdapterRowMajorTextureSupported;
+    BOOL VPAndRTArrayIndexFromAnyShaderFeedingRasterizerSupportedWithoutGSEmulation;
+    int  ResourceHeapTier;               // D3D12_RESOURCE_HEAP_TIER
 }
 
 // ── GUIDs ──────────────────────────────────────────────────────────────────

@@ -82,7 +82,7 @@ struct GlobalIndex
         else if(__dcompute_reflect(ReflectTarget.CUDA,0))
             return cuda.ctaid_x()*cuda.ntid_x() + cuda.tid_x();
         else if(__dcompute_reflect(ReflectTarget.DirectX,0))
-            return directx.global_id_x();
+            return directx.thread_id(0);
         else
             assert(0);
     }
@@ -94,7 +94,7 @@ struct GlobalIndex
         else if(__dcompute_reflect(ReflectTarget.CUDA,0))
             return cuda.ctaid_y()*cuda.ntid_y() + cuda.tid_y();
         else if(__dcompute_reflect(ReflectTarget.DirectX,0))
-            return directx.global_id_y();
+            return directx.thread_id(1);
         else
             assert(0);
     }
@@ -106,7 +106,7 @@ struct GlobalIndex
         else if(__dcompute_reflect(ReflectTarget.CUDA,0))
             return cuda.ctaid_z()*cuda.ntid_z() + cuda.tid_z();
         else if(__dcompute_reflect(ReflectTarget.DirectX,0))
-            return directx.global_id_z();
+            return directx.thread_id(2);
         else
             assert(0);
     }
@@ -181,7 +181,7 @@ struct GroupIndex
         else if(__dcompute_reflect(ReflectTarget.CUDA,0))
             return cuda.ctaid_x();
         else if(__dcompute_reflect(ReflectTarget.DirectX,0))
-            return directx.group_id_x();
+            return directx.group_id(0);
         else
             assert(0);
     }
@@ -193,7 +193,7 @@ struct GroupIndex
         else if(__dcompute_reflect(ReflectTarget.CUDA,0))
             return cuda.ctaid_y();
         else if(__dcompute_reflect(ReflectTarget.DirectX,0))
-            return directx.group_id_y();
+            return directx.group_id(1);
         else
             assert(0);
     }
@@ -205,7 +205,7 @@ struct GroupIndex
         else if(__dcompute_reflect(ReflectTarget.CUDA,0))
             return cuda.ctaid_z();
         else if(__dcompute_reflect(ReflectTarget.DirectX,0))
-            return directx.group_id_z();
+            return directx.group_id(2);
         else
             assert(0);
     }
@@ -256,7 +256,7 @@ struct SharedIndex
         else if(__dcompute_reflect(ReflectTarget.CUDA,0))
             return cuda.tid_x();
         else if(__dcompute_reflect(ReflectTarget.DirectX,0))
-            return directx.local_id_x();
+            return directx.thread_id_in_group(0);
         else
             assert(0);
     }
@@ -268,7 +268,7 @@ struct SharedIndex
         else if(__dcompute_reflect(ReflectTarget.CUDA,0))
             return cuda.tid_y();
         else if(__dcompute_reflect(ReflectTarget.DirectX,0))
-            return directx.local_id_y();
+            return directx.thread_id_in_group(1);
         else
             assert(0);
     }
@@ -280,7 +280,7 @@ struct SharedIndex
         else if(__dcompute_reflect(ReflectTarget.CUDA,0))
             return cuda.tid_z();
         else if(__dcompute_reflect(ReflectTarget.DirectX,0))
-            return directx.local_id_z();
+            return directx.thread_id_in_group(2);
         else
             assert(0);
     }

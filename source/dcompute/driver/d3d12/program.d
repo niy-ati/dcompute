@@ -20,38 +20,76 @@ struct Program
     /// Constructs a Root Signature mapping D host arguments to DXIL/SPIR-V expected registers.
     /// - Rule 1 (Global Memory): N UAV buffers map sequentially to u0..u(N-1), space0.
     /// - Rule 2 (Scalars): All scalar arguments are packed into a single CBV at c0, space0.
-    private ID3D12RootSignature buildRootSignature(ID3D12Device device, uint numUAVs, bool hasCBV)
+    private ID3D12RootSignature buildRootSignature(Device device, uint numUAVs, bool hasCBV)
     {
         D3D12_DESCRIPTOR_RANGE1[2] ranges;
         uint numRanges = 0;
-
-        // ABI Rule 1: Buffer arguments -> UAV Descriptor Table (u0..uN)
-        if (numUAVs > 0)
-        {
-            ranges[numRanges].RangeType          = D3D12_DESCRIPTOR_RANGE_TYPE.UAV;
-            ranges[numRanges].NumDescriptors     = numUAVs;
-            ranges[numRanges].BaseShaderRegister = 0; // Starts at u0
-            ranges[numRanges].RegisterSpace      = 0; // Space 0 (matches Vulkan Set 0)
-            ranges[numRanges].Flags              = D3D12_DESCRIPTOR_RANGE_FLAGS.DESCRIPTORS_VOLATILE;
-            numRanges++;
-        }
-
-        // ABI Rule 2: Scalar arguments -> CBV Descriptor Table (c0)
-        if (hasCBV)
-        {
-            ranges[numRanges].RangeType          = D3D12_DESCRIPTOR_RANGE_TYPE.CBV;
-            ranges[numRanges].NumDescriptors     = 1;
-            ranges[numRanges].BaseShaderRegister = 0; // Starts at c0
-            ranges[numRanges].RegisterSpace      = 0; // Space 0
-            ranges[numRanges].Flags              = D3D12_DESCRIPTOR_RANGE_FLAGS.DESCRIPTORS_VOLATILE;
-            numRanges++;
-        }
+        
+        bool isBindless = device.supportsBindless && Runtime.Config.enableBindlessABI;
 
         D3D12_ROOT_PARAMETER1 param;
-        param.ParameterType              = D3D12_ROOT_PARAMETER_TYPE.DESCRIPTOR_TABLE;
-        param.ShaderVisibility           = D3D12_SHADER_VISIBILITY.ALL;
-        param.DescriptorTable.NumDescriptorRanges = numRanges;
-        param.DescriptorTable.pDescriptorRanges   = ranges.ptr;
+        param.ShaderVisibility = D3D12_SHADER_VISIBILITY.ALL;
+
+        D3D12_ROOT_SIGNATURE_FLAGS flags = D3D12_ROOT_SIGNATURE_FLAGS.NONE;
+
+        if (isBindless)
+        {
+            // Bindless ABI (SM 6.6):
+            // We pass ALL arguments (scalars + buffer indices) inside a single CBV.
+            // Shaders will index ResourceDescriptorHeap directly.
+            param.ParameterType = D3D12_ROOT_PARAMETER_TYPE.CBV;
+            param.DescriptorTable.NumDescriptorRanges = 0; // Not used for CBV, but maps to Descriptor in union
+            // Note: C++ union means DescriptorTable overlaps with Descriptor.
+            // For CBV, we need to set ShaderRegister=0, RegisterSpace=0.
+            // In D3D12_ROOT_PARAMETER1, the struct layout for CBV/SRV/UAV is:
+            // struct { ShaderRegister, RegisterSpace, Flags } Descriptor;
+            // D's bindings in bindings.d map DescriptorTable over this. We must be careful!
+            // Wait, in bindings.d, D3D12_ROOT_PARAMETER1 has ONLY DescriptorTable! 
+            // We need to fix the bindings union or use DESCRIPTOR_TABLE for the CBV.
+            // Let's just use a DESCRIPTOR_TABLE containing 1 CBV (c0) for Bindless,
+            // which simplifies the driver code and achieves the same result (a single constant buffer).
+            
+            ranges[0].RangeType          = D3D12_DESCRIPTOR_RANGE_TYPE.CBV;
+            ranges[0].NumDescriptors     = 1;
+            ranges[0].BaseShaderRegister = 0; // Starts at c0
+            ranges[0].RegisterSpace      = 0; // Space 0
+            ranges[0].Flags              = D3D12_DESCRIPTOR_RANGE_FLAGS.DESCRIPTORS_VOLATILE;
+            
+            param.ParameterType = D3D12_ROOT_PARAMETER_TYPE.DESCRIPTOR_TABLE;
+            param.DescriptorTable.NumDescriptorRanges = 1;
+            param.DescriptorTable.pDescriptorRanges   = ranges.ptr;
+
+            flags |= D3D12_ROOT_SIGNATURE_FLAGS.CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED;
+        }
+        else
+        {
+            // Legacy ABI (SM 5.1/6.0): 
+            // - Buffer arguments -> UAV Descriptor Table (u0..uN)
+            // - Scalar arguments -> CBV Descriptor Table (c0)
+            if (numUAVs > 0)
+            {
+                ranges[numRanges].RangeType          = D3D12_DESCRIPTOR_RANGE_TYPE.UAV;
+                ranges[numRanges].NumDescriptors     = numUAVs;
+                ranges[numRanges].BaseShaderRegister = 0; // Starts at u0
+                ranges[numRanges].RegisterSpace      = 0; // Space 0
+                ranges[numRanges].Flags              = D3D12_DESCRIPTOR_RANGE_FLAGS.DESCRIPTORS_VOLATILE;
+                numRanges++;
+            }
+
+            if (hasCBV)
+            {
+                ranges[numRanges].RangeType          = D3D12_DESCRIPTOR_RANGE_TYPE.CBV;
+                ranges[numRanges].NumDescriptors     = 1;
+                ranges[numRanges].BaseShaderRegister = 0; // Starts at c0
+                ranges[numRanges].RegisterSpace      = 0; // Space 0
+                ranges[numRanges].Flags              = D3D12_DESCRIPTOR_RANGE_FLAGS.DESCRIPTORS_VOLATILE;
+                numRanges++;
+            }
+
+            param.ParameterType              = D3D12_ROOT_PARAMETER_TYPE.DESCRIPTOR_TABLE;
+            param.DescriptorTable.NumDescriptorRanges = numRanges;
+            param.DescriptorTable.pDescriptorRanges   = ranges.ptr;
+        }
 
         D3D12_VERSIONED_ROOT_SIGNATURE_DESC rsDesc;
         rsDesc.Version                    = D3D_ROOT_SIGNATURE_VERSION._1_1;
@@ -59,7 +97,7 @@ struct Program
         rsDesc.Desc_1_1.pParameters       = &param;
         rsDesc.Desc_1_1.NumStaticSamplers = 0;
         rsDesc.Desc_1_1.pStaticSamplers   = null;
-        rsDesc.Desc_1_1.Flags             = D3D12_ROOT_SIGNATURE_FLAGS.NONE;
+        rsDesc.Desc_1_1.Flags             = flags;
 
         ID3DBlob rsBlob, rsErr;
         auto hr = D3D12SerializeVersionedRootSignature(&rsDesc, &rsBlob, &rsErr);
@@ -69,7 +107,7 @@ struct Program
         }
 
         ID3D12RootSignature rootSig;
-        hr = device.CreateRootSignature(
+        hr = device.raw.CreateRootSignature(
             0, // node mask
             rsBlob.GetBufferPointer(),
             rsBlob.GetBufferSize(),
@@ -77,7 +115,6 @@ struct Program
             cast(void**)&rootSig
         );
 
-        // Release the serialised blob
         rsBlob.Release();
         if (rsErr !is null)
             rsErr.Release();
@@ -91,6 +128,8 @@ struct Program
     /// Results are heavily cached because CreateComputePipelineState is incredibly expensive.
     Kernel!void getKernelByName(string name, uint numUAVs = 1, bool hasCBV = false)
     {
+        import dcompute.driver.d3d12.context : Context;
+        
         // 1. Check the cache (O(1) fast path)
         if (auto cached = name in _kernelCache)
         {
@@ -99,8 +138,8 @@ struct Program
 
         Kernel!void ret;
 
-        auto device = Runtime.defaultDevice.raw;
-        if (device is null)
+        auto device = Context.current.device;
+        if (device.raw is null)
             return ret;
 
         // Build the root signature dynamically based on argument count
@@ -115,7 +154,7 @@ struct Program
         psoDesc.CS.BytecodeLength   = dxilBlob.length;
         psoDesc.NodeMask            = 0;
 
-        auto hr = device.CreateComputePipelineState(
+        auto hr = device.raw.CreateComputePipelineState(
             &psoDesc,
             &IID_ID3D12PipelineState,
             cast(void**)&ret.pipelineState

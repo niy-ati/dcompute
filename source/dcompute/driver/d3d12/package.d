@@ -5,6 +5,7 @@ public import ldc.dcompute;
 
 public import dcompute.driver.d3d12.bindings;
 public import dcompute.driver.d3d12.buffer;
+public import dcompute.driver.d3d12.context;
 public import dcompute.driver.d3d12.device;
 public import dcompute.driver.d3d12.error;
 public import dcompute.driver.d3d12.event;

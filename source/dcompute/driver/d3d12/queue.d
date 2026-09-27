@@ -7,6 +7,7 @@ import dcompute.driver.d3d12.runtime;
 import dcompute.driver.d3d12.buffer;
 import dcompute.driver.d3d12.event;
 import dcompute.driver.d3d12.error;
+import dcompute.driver.d3d12.context;
 
 /// Structure to hold resources that are currently executing on the GPU.
 /// D3D12 forbids resetting an allocator that is still in-flight.
@@ -41,7 +42,7 @@ struct Queue
 
     this(D3D12_COMMAND_LIST_TYPE type)
     {
-        device = Runtime.defaultDevice.raw;
+        device = Context.current.device.raw;
         if (device is null) return;
         
         qType = type;
@@ -287,7 +288,13 @@ struct Queue
 
                 enum numUAVs   = countUAVs!k;
                 enum numScalars= countScalars!k;
-                enum totalDescriptors = (numUAVs > 0 ? numUAVs : 1) + (numScalars > 0 ? 1 : 0);
+                
+                bool isBindless = q.device.supportsBindless && Runtime.Config.enableBindlessABI;
+
+                // In Bindless, we need descriptors for each UAV + 1 for the CBV.
+                // In Legacy, we need descriptors for each UAV + 1 for the CBV (if any scalars exist).
+                // It ends up being the same number of descriptors allocated from the heap.
+                enum totalDescriptors = (numUAVs > 0 ? numUAVs : 1) + 1;
 
                 // 1. Grab sub-allocation from global descriptor heap
                 if (q.currentDescriptorOffset + totalDescriptors >= q.MAX_DESCRIPTORS)
@@ -311,8 +318,10 @@ struct Queue
                 cpuHandle.ptr += offset * q.descriptorIncrementSize;
                 gpuHandle.ptr += offset * q.descriptorIncrementSize;
 
-                // DCompute ABI Rule 1: Map Buffer arguments to UAV views dynamically
-                // Vulkan equivalent: vkUpdateDescriptorSets for descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER
+                // We track the index of each UAV relative to the start of the entire heap (for Bindless)
+                // The absolute index is what the shader uses: ResourceDescriptorHeap[index]
+                uint baseHeapIndex = offset;
+                
                 size_t uavSlot = 0;
                 static foreach (i, arg; args)
                 {
@@ -369,25 +378,42 @@ struct Queue
                     }
                 }
 
-                // DCompute ABI Rule 2: Map scalar arguments to a Constant Buffer View (CBV c0) if present
-                // Vulkan equivalent: vkUpdateDescriptorSets for descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
-                
                 // 3. Acquire command allocator BEFORE building CBV, so we can schedule
                 //    the CB resource for deferred release on this allocator's fence.
                 auto res = q.getAvailableResource();
                 
-                ID3D12Resource cbResource;
-                static if (numScalars > 0)
+                // In Bindless, the CBV must be large enough to hold all scalars AND 32-bit indices for buffers.
+                // In Legacy, the CBV only holds scalars.
+                size_t payloadSize = 0;
+                static foreach (i, arg; args)
                 {
-                    enum rawSize = scalarSize!k;
-                    enum alignedCBSize = (rawSize + 255) & ~255; // 256-byte alignment rule for D3D12 CBVs
+                    if (isBindless)
+                    {
+                        static if (isBufferArg!(typeof(arg)) || isImageArg!(typeof(arg)))
+                            payloadSize += 4; // 32-bit integer index
+                        else
+                            payloadSize += arg.sizeof; // scalar
+                    }
+                    else
+                    {
+                        static if (!isBufferArg!(typeof(arg)) && !isImageArg!(typeof(arg)))
+                            payloadSize += arg.sizeof; // scalar
+                    }
+                }
+
+                ID3D12Resource cbResource;
+                
+                // If there's a payload to pack (either scalars exist, or we are in Bindless and have buffers)
+                if (payloadSize > 0)
+                {
+                    enum alignedCBSize = 256; // Minimum CBV alignment is 256 bytes
 
                     D3D12_HEAP_PROPERTIES hp;
                     hp.Type = D3D12_HEAP_TYPE.UPLOAD;
 
                     D3D12_RESOURCE_DESC rd;
                     rd.Dimension        = D3D12_RESOURCE_DIMENSION.BUFFER;
-                    rd.Width            = alignedCBSize;
+                    rd.Width            = ((payloadSize + 255) & ~255);
                     rd.Height           = 1;
                     rd.DepthOrArraySize = 1;
                     rd.MipLevels        = 1;
@@ -414,26 +440,47 @@ struct Queue
                         if (mapped !is null)
                         {
                             size_t byteOffset = 0;
+                            uint currentUavIndex = 0;
+                            
                             static foreach (i, arg; args)
                             {
-                                // BUG FIX: Must exclude BOTH Buffer AND Image args from CBV packing.
-                                // Previously only excluded Buffer, causing Image structs to be
-                                // memcpy'd into the constant buffer — corrupting the CBV payload.
-                                static if (!isBufferArg!(typeof(arg)) && !isImageArg!(typeof(arg)))
+                                if (isBindless)
                                 {
-                                    import core.stdc.string : memcpy;
-                                    memcpy(mapped + byteOffset, &arg, arg.sizeof);
-                                    byteOffset += arg.sizeof;
+                                    static if (isBufferArg!(typeof(arg)) || isImageArg!(typeof(arg)))
+                                    {
+                                        import core.stdc.string : memcpy;
+                                        // Pack the absolute 32-bit index into the heap
+                                        uint heapIndex = baseHeapIndex + currentUavIndex;
+                                        memcpy(mapped + byteOffset, &heapIndex, 4);
+                                        byteOffset += 4;
+                                        currentUavIndex++;
+                                    }
+                                    else
+                                    {
+                                        import core.stdc.string : memcpy;
+                                        memcpy(mapped + byteOffset, &arg, arg.sizeof);
+                                        byteOffset += arg.sizeof;
+                                    }
+                                }
+                                else
+                                {
+                                    static if (!isBufferArg!(typeof(arg)) && !isImageArg!(typeof(arg)))
+                                    {
+                                        import core.stdc.string : memcpy;
+                                        memcpy(mapped + byteOffset, &arg, arg.sizeof);
+                                        byteOffset += arg.sizeof;
+                                    }
                                 }
                             }
-                            D3D12_RANGE writeRange = D3D12_RANGE(0, alignedCBSize);
+                            D3D12_RANGE writeRange = D3D12_RANGE(0, rd.Width);
                             cbResource.Unmap(0, &writeRange);
                         }
 
                         D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc;
                         cbvDesc.BufferLocation = cbResource.GetGPUVirtualAddress();
-                        cbvDesc.SizeInBytes    = cast(uint)alignedCBSize;
+                        cbvDesc.SizeInBytes    = cast(uint)rd.Width;
 
+                        // Place the CBV at the very end of our sub-allocation
                         D3D12_CPU_DESCRIPTOR_HANDLE cbvHandle = cpuHandle;
                         cbvHandle.ptr += uavSlot * q.descriptorIncrementSize;
 
@@ -442,7 +489,6 @@ struct Queue
                         );
                         
                         // Schedule CB resource for release once this dispatch's fence passes.
-                        // Now safe because `res` was acquired above.
                         foreach(ref poolRes; q.inFlightPool) {
                             if (poolRes.allocator == res.allocator) {
                                 poolRes.pendingReleases ~= cbResource;
@@ -459,7 +505,19 @@ struct Queue
                 auto ppHeaps = cast(ID3D12DescriptorHeap)q.globalDescriptorHeap;
                 res.commandList.SetDescriptorHeaps(1, &ppHeaps);
 
-                res.commandList.SetComputeRootDescriptorTable(0, gpuHandle);
+                if (isBindless)
+                {
+                    // Bindless ABI: Only pass the CBV. The CBV contains the indices to the UAVs.
+                    // The CBV was placed at `uavSlot` in our sub-allocation.
+                    D3D12_GPU_DESCRIPTOR_HANDLE bindlessCbvHandle = gpuHandle;
+                    bindlessCbvHandle.ptr += uavSlot * q.descriptorIncrementSize;
+                    res.commandList.SetComputeRootDescriptorTable(0, bindlessCbvHandle);
+                }
+                else
+                {
+                    // Legacy ABI: Pass the entire sub-allocation starting at u0 (UAVs first, then CBV).
+                    res.commandList.SetComputeRootDescriptorTable(0, gpuHandle);
+                }
 
                 // 5. Dispatch
                 res.commandList.Dispatch(grid[0], grid[1], grid[2]);

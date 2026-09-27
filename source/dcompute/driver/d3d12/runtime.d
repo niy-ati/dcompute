@@ -4,10 +4,19 @@ import dcompute.driver.d3d12.device;
 import dcompute.driver.d3d12.platform;
 import dcompute.driver.d3d12.queue;
 import dcompute.driver.d3d12.program;
+import dcompute.driver.d3d12.context;
 
 // Global state
-private __gshared Device _defaultDevice;
-private __gshared bool   _platformReady = false;
+struct Config
+{
+    /// If true, the driver will use SM 6.6 Bindless architecture.
+    /// WARNING: Do NOT enable this until LDC supports lowering GlobalPointer to a 32-bit index!
+    __gshared static bool enableBindlessABI = false;
+}
+
+private __gshared Device  _defaultDevice;
+private __gshared Context _defaultContext;
+private __gshared bool    _platformReady = false;
 
 // Thread-local state
 private static Queue _threadQueue;
@@ -67,6 +76,8 @@ private void _initPlatform()
             // Fallback to WARP if no hardware adapters found
             _defaultDevice = Platform.getWarpDevice();
         }
+        
+        _defaultContext = Context(_defaultDevice);
 
         _platformReady = true;
     }
@@ -77,6 +88,12 @@ private void _initThread()
     if (_threadReady) return;
 
     import dcompute.driver.d3d12.bindings : D3D12_COMMAND_LIST_TYPE;
+    
+    // Automatically push the default context for the calling thread
+    // This perfectly matches cuCtxCreate/cuCtxPushCurrent semantics
+    if (Context.current.device.raw != _defaultContext.device.raw)
+        Context.push(_defaultContext);
+        
     _threadQueue = Queue(D3D12_COMMAND_LIST_TYPE.DIRECT);
     _threadCopyQueue = Queue(D3D12_COMMAND_LIST_TYPE.COPY);
     _threadReady = true;

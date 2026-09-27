@@ -4,6 +4,7 @@ import dcompute.driver.d3d12.bindings;
 import dcompute.driver.d3d12.device;
 import dcompute.driver.d3d12.error;
 import dcompute.driver.d3d12.runtime;
+import dcompute.driver.d3d12.context;
 
 /// Void pointer equivalent for D3D12 GPU memory.
 /// Mirrors dcompute.driver.cuda.memory.MemoryPointer
@@ -15,7 +16,7 @@ struct MemoryPointer
     static MemoryPointer allocate(size_t nbytes)
     {
         MemoryPointer ret;
-        auto device = Runtime.defaultDevice.raw;
+        auto device = Context.current.device.raw;
         if (device is null) return ret;
 
         D3D12_HEAP_PROPERTIES hp;
